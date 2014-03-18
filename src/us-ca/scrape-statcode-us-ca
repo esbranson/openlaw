@@ -1,0 +1,689 @@
+#! /usr/bin/python3 -uW all
+# -*- coding: utf-8 -*-
+
+usage="""
+scrape-statcode-us-ca - convert the California Codes into Akoma Ntoso
+
+Get the data from <ftp://www.leginfo.ca.gov/pub/bill/> e.g.
+<ftp://www.leginfo.ca.gov/pub/bill/pubinfo_2013.zip>
+
+Usage:	scrape-statcode-us-ca [options] zipfile
+Arguments:
+
+	zipfile		ZIP file of the LC data
+	-t transform	XSLT transform from CAML to Akoma Ntoso
+	-d		enable debugging (twice for verbose)
+	-c code		output specific codes (one flag for each)
+	-h		show this help and exit
+
+NOTE: To use on Windows console, "SET PYTHONIOENCODING=cp437:replace".
+"""
+
+import sys
+import getopt
+import logging
+import zipfile
+import csv
+import string
+import io
+import itertools
+import re
+try:
+	import lxml.etree as etree
+except ImportError:
+	import xml.etree.ElementTree as etree
+
+camlnsxslt = etree.XSLT(etree.XML("""<?xml version="1.0"?>
+<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+
+    <xsl:output indent="yes" method="xml" encoding="utf-8" omit-xml-declaration="yes"/>
+
+    <!-- Stylesheet to remove all namespaces from a document -->
+    <!-- NOTE: this will lead to attribute name clash, if an element contains
+        two attributes with same local name but different namespace prefix -->
+    <!-- Nodes that cannot have a namespace are copied as such -->
+
+    <!-- template to copy elements -->
+    <xsl:template match="*">
+        <xsl:element name="{local-name()}">
+            <xsl:apply-templates select="@* | node()"/>
+        </xsl:element>
+    </xsl:template>
+
+    <!-- template to copy attributes -->
+    <xsl:template match="@*">
+        <xsl:attribute name="{local-name()}">
+            <xsl:value-of select="."/>
+        </xsl:attribute>
+    </xsl:template>
+
+    <!-- template to copy the rest of the nodes -->
+    <xsl:template match="comment() | text() | processing-instruction()">
+        <xsl:copy/>
+    </xsl:template>
+
+</xsl:stylesheet>
+"""))
+
+##
+# Entry function. Parse parameters, call main function.
+#
+def main():
+	codes = []
+	debug = False
+	loglvl = logging.WARN
+	try:
+		opts, args = getopt.getopt(sys.argv[1:], 'hdt:c:')
+	except getopt.GetoptError as e:
+		logging.fatal('getopt error: %s %s', e, usage)
+		sys.exit(1)
+	if len(args) < 1:
+		logging.fatal('need filename %s', usage)
+		sys.exit(1)
+	tfn = 'caml2akn.xsl'
+	zfn = args[0]
+	for opt, arg in opts:
+		if opt in ('-h', '--help'):
+			print(usage)
+			sys.exit(0)
+		elif opt in {'-d', '--debug'}:
+			if not debug:
+				loglvl = logging.INFO
+			else:
+				loglvl = logging.DEBUG
+			debug = True
+		elif opt in {'-c', '--code'}:
+			codes.append(arg.upper())
+		elif opt in {'-t', '--transform'}:
+			tfn = arg
+#		else:
+#			logging.fatal('invalid option: %s %s', opt, usage)
+#			sys.exit(1)
+	try:
+		with open(tfn) as tf:
+			xslt = etree.XSLT(etree.parse(tf))
+	except IOError as e:
+		logging.fatal('opening files: {} {}'.format(e, usage))
+		sys.exit(1)
+	logging.basicConfig(format='{levelname:8s}: {message}', style='{', level=loglvl)
+	do_it(zfn, xslt, codes)
+
+##
+# Build the organizational graph, match sections to their data, and read
+# section text from file as we convert t,,,
+#
+def do_it(zfn, xslt, codes):
+	logging.info('parsing law db...')
+	law = parse_org(zfn)
+
+	logging.info('matching sections...')
+	matchsecs(law, zfn)
+
+	# TODO parallelize
+	for code in filter(lambda x: not len(codes) or x in codes, list(law.keys())):
+		code2akn(zfn, xslt, law, code)
+		del law[code]
+
+##
+# Driver function to convert legal code into Akoma Ntoso.
+#
+def code2akn(zfn, xslt, law, code):
+	logging.info('converting {}...'.format(code))
+	zf = zipfile.ZipFile(zfn)
+#	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD08", "proposed": "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD05.proposed", "uslm": "http://xml.house.gov/schemas/uslm/1.0", "xhtml": "http://www.w3.org/1999/xhtml", "dc": "http://purl.org/dc/elements/1.1/", "dcterms": "http://purl.org/dc/terms/"})
+	akn = etree.Element('akomaNtoso')
+	doc = akn.makeelement('doc', attrib={'name': 'code'})
+	akn.append(doc)
+	meta = doc.makeelement('meta')
+	doc.append(meta)
+	body = doc.makeelement('mainBody')
+	doc.append(body)
+	code2akn_r(zf, xslt, body, law[code], itertools.count(1))
+	zf.close()
+	fn = code + '.xml'
+	logging.info('writing {}...'.format(fn))
+	akn.getroottree().write(fn)
+
+##
+#
+#
+def code2akn_r(zf, xslt, parent_el, item, unk_count):
+	# create this node
+	typ, enum, head = item[0]
+	elid = build_hcontainer_id(typ, enum, parent_el, unk_count)
+#	elname = build_name(typ, enum, head)
+#	this_el = parent_el.makeelement(typ, attrib={'id': elid, 'name': elname})
+	this_el = parent_el.makeelement(typ, attrib={'id': elid})
+	parent_el.append(this_el)
+	if enum is not None:
+		num_el = this_el.makeelement('num')
+		num_el.text = enum
+		this_el.append(num_el)
+
+	# sub org items
+	for subitem in item[1]:
+		code2akn_r(zf, xslt, this_el, subitem, unk_count)
+
+	# sub sec items
+	for subitem in item[2]:
+		enum, fn, (stat_y, stat_c, stat_s, hist) = subitem
+		elid = build_section_id(enum, parent_el)
+#		elname = build_name('section', enum)
+#		section_el = this_el.makeelement('section', attrib={'id': elid, 'name': elname})
+#		section_el = this_el.makeelement('section', attrib={'id': elid})
+		section_el = this_el.makeelement('section', attrib={'id': elid, 'fn': fn})
+		this_el.append(section_el)
+		num_el = section_el.makeelement('num')
+		num_el.text = enum
+		section_el.append(num_el)
+		with zf.open(fn) as f:
+			caml_el = xslt(camlnsxslt(etree.parse(f))).getroot()
+		caml2akn(section_el, caml_el)
+
+##
+# Build an ID attribute for an organizational element.
+#
+def build_hcontainer_id(typ, enum, parent_el, unk_count=None):
+	if typ == 'book':
+		return '/' + enum.lower()
+	elif typ == 'hcontainer':
+		return parent_el.attrib['id'] + '/unnamed-' + str(next(unk_count))
+	else:
+		return parent_el.attrib['id'] + '/' + typ + '-' + enum
+
+##
+# Build an ID attribute for a section element.
+#
+def build_section_id(enum, parent_el):
+	while parent_el.tag != 'book':
+		parent_el = parent_el.getparent()
+	return parent_el.attrib['id'] + '/section-' + enum
+
+##
+# Build a name attribute for an element.
+#
+def build_name(typ, enum, head=None):
+	if enum is None:
+		return head
+	if typ == 'book':
+		return head
+	return typ[0].upper() + typ[1:] + ' ' + enum
+
+##
+# Parse the organizational structure into a nested dictionary.
+#
+# Each level is a dictionary of the lower levels. The lowest level is
+# data of the form [(desc, (start, end), []), ...] where the empty
+# list is for the secions.
+#
+# For the data of a non-lowest-level, follow the 'NULL' keys on
+# down, as when
+#
+def parse_org(zfn):
+	zf = zipfile.ZipFile(zfn)
+	law = {}
+
+	# codes_tbl:
+	#
+	# (
+	#	CODE,
+	#	TITLE
+	# )
+	with io.TextIOWrapper(zf.open('CODES_TBL.dat'), encoding='utf-8', newline='') as codes_tbl:
+		for r in csv.reader(codes_tbl, 'excel-tab', quotechar='`'):
+			code = r[0]
+			head = r[1].strip('* ').split(' - ')[0]
+			law[code] = [None,SparseList(),SparseList()]
+			law[code][0] = ('book',code,head)
+
+	# law_toc_tbl:
+	#
+	# (
+	#	LAW_CODE,
+	#	DIVISION,
+	#	TITLE,
+	#	PART,
+	#	CHAPTER,
+	#	ARTICLE,
+	#	HEADING,
+	#	ACTIVE_FLG,
+	#	TRANS_UID,
+	#	TRANS_UPDATE,
+	#	NODE_SEQUENCE,
+	#	NODE_LEVEL,
+	#	NODE_POSITION,
+	#	NODE_TREEPATH,
+	#	CONTAINS_LAW_SECTIONS,
+	#	HISTORY_NOTE,
+	#	OP_STATUES,
+	#	OP_CHAPTER,
+	#	OP_SECTION
+	# ) 
+	with io.TextIOWrapper(zf.open('LAW_TOC_TBL.dat'), encoding='utf-8', newline='') as law_toc_tbl:
+		for row in csv.reader(law_toc_tbl, 'excel-tab', quotechar='`'):
+			# parse row
+			code = row[0]
+			if row[7] == 'Y':
+				active = True
+			elif row[7] == 'N':
+				active = False
+			else:
+				logging.fatal('unknown row[7]')
+				sys.exit(1)
+			path = row[13]
+			typ, enum, head = parse_header(row[6])
+			if row[14] == 'Y':
+				empty = False
+			elif row[14] == 'N':
+				empty = True
+			else:
+				logging.fatal('unknown row[14]')
+				sys.exit(1)
+			if row[16] == 'NULL':
+				op_stat = None
+			else:
+				op_stat = row[16]
+			if row[17] == 'NULL':
+				op_ch = None
+			else:
+				op_ch = row[17]
+			if row[18] == 'NULL':
+				op_sec = None
+			else:
+				op_sec = row[18]
+#			# checks
+#			if not empty and (s is None or e is None):
+#				warn('DB insists', code, path, typ, n, t, 'has el but doesnt give s/e')
+			if not active:
+				logging.debug('not active: {} {} {} {}'.format(code,typ,enum,head))
+#			if empty:
+#				info('empty:',typ,n,t,s,e)
+			if (op_ch and not op_stat) or (op_sec and (not op_stat or not op_ch)):
+				logging.debug('~stat&(ch|sec): {} {} {}'.format(op_stat,op_ch,op_sec))
+			if op_stat:
+				try:
+					y = int(op_stat)
+				except ValueError:
+					logging.debug('years are in N: {} {} {}'.format(op_stat,op_ch,op_sec))
+				else:
+					if y < 1849 or y > 2013:
+						logging.debug('stat: {} {} {}'.format(op_stat,op_ch,op_sec))
+#					op_stat
+			org_start(law[code], path, (typ, enum, head))
+
+	zf.close()
+	return law
+
+##
+# Parse the type, enumeration, and heading.
+#
+def parse_header(s):
+	typ = None
+	enum = None
+	head = None
+	typs = {'division', 'part', 'subpart', 'title', 'subtitle', 'chapter', 'subchapter', 'article'}
+	if s[0] == '[': # TODO mark as repealed
+		s = s.split(']', 1)[0][1:]
+	if '.' not in s:
+		typ = 'hcontainer'
+		enum = None
+		head = s.strip()
+		logging.debug('no typ+enum: {}'.format(s))
+		return typ, enum, head
+	first, rest = s.split('. ', 1)
+	typ, enum = first.split(' ', 1)
+	typ = typ.lower()
+	if typ not in typs:
+#		logging.debug('non-std header: {}'.format(s))
+		first, rest = s.split(' (', 1)
+		for t in typs:
+			if t in rest.lower():
+				first1, rest1 = rest.lower().split(t, 1)
+				first2, rest2 = rest1.lstrip().split(' ', 1)
+				enum = first2.strip()
+				typ = t
+				head = first
+				logging.debug('extracted header: {} {} {}'.format(typ, enum, head))
+				return typ, enum, head
+		logging.warning('typ not recognized: {}'.format(s))
+		typ = 'hcontainer'
+		enum = None
+		head = s
+		return typ, enum, head
+	head = rest.split(' [', 1)[0]
+	return typ, enum, head
+
+##
+# Use a DB "treepath" (one-based indexing separated by a period) to traverse
+# a list (actually a SparseList), creating a list at each traversal if
+# necessary.
+#
+# A list represents an organizational element, with the zeroth item
+# representing the organizational element data, the subsequent items
+# representing its children, and any non-zeroth non-list items representing
+# sections.
+#
+# Ex:
+#
+# {'header': ('type1', 'enum1' 'title1'), 'org': [{'header': ('type2', 'enum1' 'title1'), 'sec': [('enum1', 'fn1', ('staty1', 'statch1')), ('enum2', 'fn2', ('staty2', 'statch2'))]}, {'header':('type2', 'enum2' 'title2'), 'sec': [('enum3', 'fn3', ('staty3', 'statch3')), ...]}, ...]}
+#
+def org_get(l, path):
+	for p in path.split('.'):
+		i = int(p)-1 # paths are one-based
+		ln = l[1][i]
+		if ln is None:
+			l[1][i] = [None, SparseList(), SparseList()]
+			ln = l[1][i]
+		l = ln
+	return l
+
+##
+# Traverse a list and add the data to the zeroth position of the list
+# at that level. Used for organizational elements as the zeroth item
+# is always the organizational element's data.
+#
+def org_start(l, path, data):
+	l = org_get(l, path)
+	l[0] = data
+
+##
+# Traverse a list and append the data to the list at that level.
+#
+def org_app(l, path, pos, data):
+	l = org_get(l, path)
+	i = int(pos)-1 # paths are one-based
+	l[2][i] = data
+
+##
+# A list that will automatically grow, setting preceeding items as None.
+#
+# See <http://stackoverflow.com/questions/1857780/sparse-assignment-list-in-python>.
+#
+class SparseList(list):
+	def __setitem__(self, index, value):
+		missing = index - len(self) + 1
+		if missing > 0:
+			self.extend([None] * missing)
+		list.__setitem__(self, index, value)
+
+	def __getitem__(self, index):
+		try:
+			return list.__getitem__(self, index)
+		except IndexError:
+			return None
+
+##
+# Match all sections and add their data to the organization data
+# structure. Only one element, the deepest element, gets the data.
+#
+# TODO: what do brackets in section mean?
+# TODO: mod for use in CONS
+#
+def matchsecs(law, zfn):
+	zf = zipfile.ZipFile(zfn)
+	rows = {} 
+
+	logging.info('parsing and matching section tables...')
+
+	# law_toc_sections_tbl:
+	#
+	# (
+	#       ID,
+	#       LAW_CODE,
+	#       NODE_TREEPATH,
+	#       SECTION_NUM,
+	#       SECTION_ORDER,
+	#       TITLE,
+	#       OP_STATUES,
+	#       OP_CHAPTER,
+	#       OP_SECTION,
+	#       TRANS_UID,
+	#       TRANS_UPDATE,
+	#       LAW_SECTION_VERSION_ID,
+	#       SEQ_NUM
+	# )
+	with io.TextIOWrapper(zf.open('LAW_TOC_SECTIONS_TBL.dat'), encoding='utf-8', newline='') as law_toc_sec_tbl:
+		for r1 in csv.reader(law_toc_sec_tbl, 'excel-tab', quotechar='`'):
+			key = r1[11]
+			code = r1[1]
+			path = r1[2]
+			sec = r1[3].strip('[]').rstrip('.') # not sure what brackets mean
+			pos = r1[4]
+			assert int(pos) != 0
+			if sec.count(' '):
+				sec = sec.split()[-1]
+			rows[key] = [code, path, sec, pos]
+
+	# law_section_tbl:
+	#
+	# (
+	#       id,
+	#       law_code,
+	#       section_num,
+	#       op_statutes,
+	#       op_chapter,
+	#       op_section,
+	#       effective_date,
+	#       law_section_version_id,
+	#       division,
+	#       title,
+	#       part,
+	#       chapter,
+	#       article,
+	#       history,
+	#       content_xml,
+	#       active_flg,
+	#       trans_uid,
+	#       trans_update,
+	# )
+	#
+	with io.TextIOWrapper(zf.open('LAW_SECTION_TBL.dat'), encoding='utf-8', newline='') as law_sec_tbl:
+		for r2 in csv.reader(law_sec_tbl, 'excel-tab', quotechar='`'):
+#			code = r2[1]
+			key = r2[7]
+			stat_y = r2[3]
+			stat_c = r2[4]
+			stat_s = r2[5]
+			hist = r2[13]
+			fn = r2[14] # filename
+			act = r2[15]
+
+			if act != 'Y':
+				logging.fatal('row not active! %s', row)
+				sys.exit(1)
+
+			if stat_y == 'NULL':
+				stat_y = None
+			if stat_c == 'NULL':
+				stat_c = None
+			if stat_s == 'NULL':
+				stat_s = None
+			stat = (stat_y,stat_c,stat_s,hist)
+
+			rows[key].append(fn)
+			rows[key].append(stat)
+
+	zf.close()
+
+	logging.info('adding section tables to law structure...')
+
+	for key in rows:
+		code = rows[key][0]
+		path = rows[key][1]
+		sec = rows[key][2]
+		pos = rows[key][3]
+		fn = rows[key][4]
+		stat = rows[key][5]
+
+		org_app(law[code], path, pos, (sec, fn, stat))
+
+caml2akn_re1 = re.compile('^\(([^)]+)\)(.*)')
+caml2akn_re2 = re.compile('^\(([^)]+)\)\s*\(([^)]+)\)(.*)')
+caml2akn_re3 = re.compile('^\(([^)]+)\)\s*\(([^)]+)\)\s*\(([^)]+)\)(.*)')
+
+##
+# Return AKN given (transformed) CAML.
+#
+# Foreach non-empty 'p' child in the top-level Content element,
+# check for a 3, 2, or 1 section intro. Make sure to check
+# if its a valid enum. If there are multiple section intros,
+# attach each to its parent element. If it doesn't have a
+# section intro, attach to the apparent parent element.
+#
+# TODO: Some 'p' elements without section intros should be
+# attached to the top-level section element, not their
+# apparent parent. We may have to manual decide these cases.
+#
+def caml2akn(sectionel, camlel):
+	# in form of ('a', Element)
+	top = {'section': (None, sectionel),
+		'subdivision': (None, None),
+		'paragraph': (None, None),
+		'subparagraph': (None, None),
+		'clause': (None, None)}
+	for childel in camlel:
+		# we only convert non-empty 'p'
+		if childel.tag != 'p' or childel.text is None:
+			caml2akn_attachcontent(top, childel)
+			continue
+		first = None
+		second = None
+		third = None
+		# match or attach and continue
+		m = caml2akn_re3.search(childel.text)
+		if m:
+			first, second, third, rest = m.groups()
+		else:
+			m = caml2akn_re2.search(childel.text)
+			if m:
+				first, second, rest = m.groups()
+			else:
+				m = caml2akn_re1.search(childel.text)
+				if m:
+					first, rest = m.groups()
+				else:
+					# we cannot convert
+					caml2akn_attachcontent(top, childel)
+					continue
+		# verify enumerators are valid
+		if first and caml2akn_gethtype(top, first) is None or second and caml2akn_gethtype(top, second) is None or third and caml2akn_gethtype(top, third) is None:
+			caml2akn_attachcontent(top, childel)
+			continue
+		# attach each new hcontainer to each new parent hcontainer
+		newel,typ = caml2akn_attachhcontainer(top, first)
+		if second:
+			newel,typ = caml2akn_attachhcontainer(top, second, newel)
+		if third:
+			newel,typ = caml2akn_attachhcontainer(top, third, newel)
+		# attach content
+		childel.text = rest.lstrip()
+		caml2akn_attachcontent(top, childel, newel)
+		# normalize the state
+		caml2akn_normalizetop(top, typ)
+
+caml2akn_topidxl = ['section',
+	'subdivision',
+	'paragraph',
+	'subparagraph',
+	'clause']
+caml2akn_topidx = {'section': 0,
+	'subdivision': 1,
+	'paragraph': 2,
+	'subparagraph': 3,
+	'clause': 4}
+
+##
+# Return the lowest element above 'typ', or the lowest element
+# if 'typ' is None.
+#
+def caml2akn_getparent(top, typ=None):
+	if typ is None:
+		startidx = 4
+	else:
+		startidx = caml2akn_topidx[typ]-1
+	for checkidx in range(startidx, -1, -1):
+		checktyp = caml2akn_topidxl[checkidx]
+		if top[checktyp][1] is not None:
+			return top[checktyp][1]
+	return None # XXX do we ever?
+
+##
+# After we set a new element in 'top', we need to clear all lower
+# elements, otherwise we will mistakenly choose them as parents.
+#
+def caml2akn_normalizetop(top, typ):
+	startidx = caml2akn_topidx[typ]+1
+	for clearidx in range(startidx, len(caml2akn_topidxl)):
+		cleartyp = caml2akn_topidxl[clearidx]
+		top[cleartyp] = (None, None)
+
+##
+# Create and attach an 'hconatiner' to its parent given an enumerator
+# and the state ('top') and possibly a predetermined parent.
+#
+def caml2akn_attachhcontainer(top, enum, parentel=None):
+	typ = caml2akn_gethtype(top, enum)
+	if parentel is None:
+		parentel = caml2akn_getparent(top, typ)
+	newelid = build_hcontainer_id(typ, enum, parentel)
+	newel = parentel.makeelement(typ, attrib={'id': newelid})
+	parentel.append(newel)
+	numel = newel.makeelement('num')
+	numel.text = enum
+	newel.append(numel)
+	top[typ] = (enum, newel)
+	return newel,typ
+
+##
+# Attach child element to the parent element's content.
+#
+def caml2akn_attachcontent(top, childel, parentel=None):
+	if parentel is None:
+		parentel = caml2akn_getparent(top)
+	content = parentel.find('content')
+	if content is None:
+		content = parentel.makeelement('content')
+		parentel.append(content)
+	content.append(childel)
+
+##
+# Determine the type of element. Note that 'i' may be a clause, or it
+# may be a subdivision that comes after 'h' etc.
+#
+#  ---------------------
+# |  s   |     type     |
+#  ---------------------
+# | None | content      |
+# |  a   | subdivision  |
+# |  1   | paragraph    |
+# |  A   | subparagraph |
+# |  i   | clause       |
+#  ---------------------
+#
+def caml2akn_gethtype(top, s):
+	ret = None
+	if s.isdecimal():
+		ret = 'paragraph'
+	elif s.isupper():
+		ret = 'subparagraph'
+	elif 'i' not in s and 'v' not in s and 'x' not in s:
+		ret = 'subdivision'
+	elif s == 'i' and top['subdivision'][0] == 'h':
+		ret = 'subdivision'
+	elif s == 'v' and top['subdivision'][0] == 'u':
+		ret = 'subdivision'
+	elif s == 'x' and top['subdivision'][0] == 'w':
+		ret = 'subdivision'
+	elif s[0] == 'a' or s[0] == 'b':
+		ret = 'subdivision'
+	elif s[0].isupper() or ' ' in s or 'reserved' in s:
+		logging.debug('not htype: {}'.format(s))
+		ret = None
+	else:
+#		logging.debug('assuming roman: {}'.format(s))
+		ret = 'clause'
+	return ret
+
+if __name__ == "__main__":
+	main()
+
