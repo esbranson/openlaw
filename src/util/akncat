@@ -1,0 +1,81 @@
+#! /usr/bin/python3 -uW all
+# -*- coding: utf-8 -*-
+
+usage="""
+Usage: akncat [OPTION]... [FILE]...
+Concatenate Akoma Ntoso FILE(s) sections to standard output.
+
+  -n, --nums            toggle output of section numbers (default: yes)
+  -h, --headings        toggle output of heading/subheading (default: yes)
+  -t, --text            toggle output of section text (default: yes)
+  -r, --refs            toggle output of section references (default: no)
+      --help            display this help and exit
+
+With no FILE, or when FILE is -, read standard input.
+"""
+
+import sys
+import getopt
+import logging
+import re
+import lxml.etree as etree
+
+##
+# Entry function. Parse parameters, call main function.
+#
+def main():
+	do_numbers = True
+	do_headings = True
+	do_text = True
+	do_notes = False
+	loglvl = logging.WARN
+	xfn = 'akn2txt.xsl'
+	try:
+		opts, args = getopt.getopt(sys.argv[1:], 'nhtr:')
+	except getopt.GetoptError as e:
+		logging.fatal('getopt error: %s %s', e, usage)
+		sys.exit(1)
+	for opt, arg in opts:
+		if opt in {'-h'}:
+			do_headings = not do_headings
+		elif opt in {'-r'}:
+			do_notes = not do_notes
+		elif opt in {'-n'}:
+			do_numbers = not do_numbers
+		elif opt in {'-t'}:
+			do_text = not do_text
+	if len(args) < 1:
+		args = ['-']
+	logging.basicConfig(format='{levelname:8s}: {message}', style='{', level=loglvl)
+	for fn in args:
+		if fn == '-':
+			f = sys.stdin
+		else:
+			f = open(fn)
+		with f as f:
+			tree = etree.parse(f)
+		do_it(tree, do_numbers, do_headings, do_text, do_notes)
+
+##
+# TODO
+#
+def do_it(tree, do_numbers, do_headings, do_text, do_notes):
+	for section in tree.iterfind('//section'):
+		enum = ''
+		heading = ''
+		text = ''
+		if do_numbers:
+			num = section.find('num')
+			if num is not None:
+				enum = num.text+'. '
+		if do_headings:
+			head = section.find('heading')
+			if head is not None:
+				heading = head.text+'. '
+		if do_text:
+			text = ' '.join([re.sub('<[^<]+?>', '', etree.tostring(p, encoding=str)) for p in section.findall('.//p')])
+		print(enum + heading + text)
+
+if __name__ == "__main__":
+	main()
+
