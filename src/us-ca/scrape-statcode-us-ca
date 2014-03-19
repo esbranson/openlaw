@@ -11,7 +11,6 @@ Usage:	scrape-statcode-us-ca [options] zipfile
 Arguments:
 
 	zipfile		ZIP file of the LC data
-	-t transform	XSLT transform from CAML to Akoma Ntoso
 	-d		enable debugging (twice for verbose)
 	-c code		output specific codes (one flag for each)
 	-h		show this help and exit
@@ -33,37 +32,46 @@ try:
 except ImportError:
 	import xml.etree.ElementTree as etree
 
-camlnsxslt = etree.XSLT(etree.XML("""<?xml version="1.0"?>
-<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+xslt = etree.XSLT(etree.XML("""<?xml version="1.0"?>
+<xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="1.0" 
+	xmlns:caml="http://lc.ca.gov/legalservices/schemas/caml.1#">
+	<xsl:output omit-xml-declaration="yes" indent="yes"/>
 
-    <xsl:output indent="yes" method="xml" encoding="utf-8" omit-xml-declaration="yes"/>
+	<xsl:template match="caml:Content">
+		<content>
+		<xsl:apply-templates/>
+		</content>
+	</xsl:template>
 
-    <!-- Stylesheet to remove all namespaces from a document -->
-    <!-- NOTE: this will lead to attribute name clash, if an element contains
-        two attributes with same local name but different namespace prefix -->
-    <!-- Nodes that cannot have a namespace are copied as such -->
+	<xsl:template match="@*|node()[not(self::*)]">
+		<xsl:copy/>
+	</xsl:template>
 
-    <!-- template to copy elements -->
-    <xsl:template match="*">
-        <xsl:element name="{local-name()}">
-            <xsl:apply-templates select="@* | node()"/>
-        </xsl:element>
-    </xsl:template>
+	<xsl:template match="*">
+		<xsl:element name="{local-name()}">
+			<xsl:apply-templates select="node()|@*"/>
+		</xsl:element>
+	</xsl:template>
 
-    <!-- template to copy attributes -->
-    <xsl:template match="@*">
-        <xsl:attribute name="{local-name()}">
-            <xsl:value-of select="."/>
-        </xsl:attribute>
-    </xsl:template>
+	<xsl:template match="@class">
+		<xsl:attribute name="style">
+			<xsl:value-of select="."/>
+		</xsl:attribute>
+	</xsl:template>
 
-    <!-- template to copy the rest of the nodes -->
-    <xsl:template match="comment() | text() | processing-instruction()">
-        <xsl:copy/>
-    </xsl:template>
+	<xsl:template match="span[@class='EnSpace']">
+		<xsl:text> </xsl:text>
+	</xsl:template>
 
-</xsl:stylesheet>
-"""))
+	<xsl:template match="span[@class='EmSpace']">
+		<xsl:text> </xsl:text>
+	</xsl:template>
+
+	<xsl:template match="text()" priority="2">
+		<xsl:value-of select="normalize-space()"/>
+	</xsl:template>
+
+</xsl:stylesheet>"""))
 
 ##
 # Entry function. Parse parameters, call main function.
@@ -80,7 +88,6 @@ def main():
 	if len(args) < 1:
 		logging.fatal('need filename %s', usage)
 		sys.exit(1)
-	tfn = 'caml2akn.xsl'
 	zfn = args[0]
 	for opt, arg in opts:
 		if opt in ('-h', '--help'):
@@ -94,25 +101,17 @@ def main():
 			debug = True
 		elif opt in {'-c', '--code'}:
 			codes.append(arg.upper())
-		elif opt in {'-t', '--transform'}:
-			tfn = arg
 #		else:
 #			logging.fatal('invalid option: %s %s', opt, usage)
 #			sys.exit(1)
-	try:
-		with open(tfn) as tf:
-			xslt = etree.XSLT(etree.parse(tf))
-	except IOError as e:
-		logging.fatal('opening files: {} {}'.format(e, usage))
-		sys.exit(1)
 	logging.basicConfig(format='{levelname:8s}: {message}', style='{', level=loglvl)
-	do_it(zfn, xslt, codes)
+	do_it(zfn, codes)
 
 ##
 # Build the organizational graph, match sections to their data, and read
 # section text from file as we convert t,,,
 #
-def do_it(zfn, xslt, codes):
+def do_it(zfn, codes):
 	logging.info('parsing law db...')
 	law = parse_org(zfn)
 
@@ -121,13 +120,13 @@ def do_it(zfn, xslt, codes):
 
 	# TODO parallelize
 	for code in filter(lambda x: not len(codes) or x in codes, list(law.keys())):
-		code2akn(zfn, xslt, law, code)
+		code2akn(zfn, law, code)
 		del law[code]
 
 ##
 # Driver function to convert legal code into Akoma Ntoso.
 #
-def code2akn(zfn, xslt, law, code):
+def code2akn(zfn, law, code):
 	logging.info('converting {}...'.format(code))
 	zf = zipfile.ZipFile(zfn)
 #	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD08", "proposed": "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD05.proposed", "uslm": "http://xml.house.gov/schemas/uslm/1.0", "xhtml": "http://www.w3.org/1999/xhtml", "dc": "http://purl.org/dc/elements/1.1/", "dcterms": "http://purl.org/dc/terms/"})
@@ -138,7 +137,7 @@ def code2akn(zfn, xslt, law, code):
 	doc.append(meta)
 	body = doc.makeelement('mainBody')
 	doc.append(body)
-	code2akn_r(zf, xslt, body, law[code], itertools.count(1))
+	code2akn_r(zf, body, law[code], itertools.count(1))
 	zf.close()
 	fn = code + '.xml'
 	logging.info('writing {}...'.format(fn))
@@ -147,7 +146,7 @@ def code2akn(zfn, xslt, law, code):
 ##
 #
 #
-def code2akn_r(zf, xslt, parent_el, item, unk_count):
+def code2akn_r(zf, parent_el, item, unk_count):
 	# create this node
 	typ, enum, head = item[0]
 	elid = build_hcontainer_id(typ, enum, parent_el, unk_count)
@@ -162,7 +161,7 @@ def code2akn_r(zf, xslt, parent_el, item, unk_count):
 
 	# sub org items
 	for subitem in item[1]:
-		code2akn_r(zf, xslt, this_el, subitem, unk_count)
+		code2akn_r(zf, this_el, subitem, unk_count)
 
 	# sub sec items
 	for subitem in item[2]:
@@ -177,7 +176,7 @@ def code2akn_r(zf, xslt, parent_el, item, unk_count):
 		num_el.text = enum
 		section_el.append(num_el)
 		with zf.open(fn) as f:
-			caml_el = xslt(camlnsxslt(etree.parse(f))).getroot()
+			caml_el = xslt(etree.parse(f)).getroot()
 		caml2akn(section_el, caml_el)
 
 ##
