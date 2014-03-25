@@ -29,7 +29,6 @@ def main():
 	do_text = True
 	do_notes = False
 	loglvl = logging.WARN
-	xfn = 'akn2txt.xsl'
 	try:
 		opts, args = getopt.getopt(sys.argv[1:], 'nhtr:')
 	except getopt.GetoptError as e:
