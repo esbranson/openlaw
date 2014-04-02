@@ -1,79 +1,106 @@
 #! /usr/bin/python3 -uW all
 # -*- coding: utf-8 -*-
 
-usage="""
-Usage: akncat [OPTION]... [FILE]...
+usage="""Usage: akncat [OPTION]... [FILE]...
 Concatenate Akoma Ntoso FILE(s) sections to standard output.
 
+  -a, --abbrev          toggle output of document abbreviation (default: yes)
   -n, --nums            toggle output of section numbers (default: yes)
-  -h, --headings        toggle output of heading/subheading (default: yes)
-  -t, --text            toggle output of section text (default: yes)
+  -t, --headings        toggle output of title/heading/subheading (default: yes)
+  -c, --content         toggle output of section content (default: yes)
   -r, --refs            toggle output of section references (default: no)
-      --help            display this help and exit
+  -h, --help            display this help and exit
 
-With no FILE, or when FILE is -, read standard input.
-"""
+With no FILE, or when FILE is -, read standard input."""
 
 import sys
 import getopt
 import logging
 import re
-import lxml.etree as etree
+try: import lxml.etree as etree
+except ImportError: import xml.etree.ElementTree as etree
+
+xmlns = "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14"
+xmlns_proposed = "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed"
 
 ##
 # Entry function. Parse parameters, call main function.
 #
 def main():
-	do_numbers = True
-	do_headings = True
-	do_text = True
+	do_abbrev = True
+	do_number = True
+	do_heading = True
+	do_content = True
 	do_notes = False
 	loglvl = logging.WARN
 	try:
-		opts, args = getopt.getopt(sys.argv[1:], 'nhtr:')
+		opts, args = getopt.getopt(sys.argv[1:], 'trncah')
 	except getopt.GetoptError as e:
-		logging.fatal('getopt error: %s %s', e, usage)
-		sys.exit(1)
+		logging.fatal('getopt error: {}'.format(e))
+		print(usage)
+		sys.exit(2)
 	for opt, arg in opts:
-		if opt in {'-h'}:
-			do_headings = not do_headings
-		elif opt in {'-r'}:
+		if opt in {'-t', '--headings'}:
+			do_heading = not do_heading
+		elif opt in {'-r', '--refs'}:
 			do_notes = not do_notes
-		elif opt in {'-n'}:
-			do_numbers = not do_numbers
-		elif opt in {'-t'}:
-			do_text = not do_text
+		elif opt in {'-n', '--nums'}:
+			do_number = not do_number
+		elif opt in {'-c', '--content'}:
+			do_content = not do_content
+		elif opt in {'-a', '--abbrev'}:
+			do_abbrev = not do_abbrev
+		elif opt in {'-h', '--help'}:
+			print(usage)
+			sys.exit(1)
+	logging.basicConfig(format='{levelname:8s}: {message}', style='{', level=loglvl)
 	if len(args) < 1:
 		args = ['-']
-	logging.basicConfig(format='{levelname:8s}: {message}', style='{', level=loglvl)
-	for fn in args:
-		if fn == '-':
-			f = sys.stdin
-		else:
-			f = open(fn)
-		with f as f:
-			tree = etree.parse(f)
-		do_it(tree, do_numbers, do_headings, do_text, do_notes)
+	try:
+		for fn in args:
+			if fn == '-':
+				f = sys.stdin
+			else:
+				f = open(fn)
+			with f as f:
+				tree = etree.parse(f)
+			do_it(tree, do_abbrev, do_number, do_heading, do_content, do_notes)
+	except BrokenPipeError:
+		pass
 
 ##
 # TODO
 #
-def do_it(tree, do_numbers, do_headings, do_text, do_notes):
-	for section in tree.iterfind('//section'):
+def do_it(tree, do_abbrev, do_number, do_heading, do_content, do_notes):
+	numre = '{' + xmlns + '}num'
+	headingre = '{' + xmlns + '}heading'
+	contentre = './/{' + xmlns + '}content'
+	metare = '{' + xmlns + '}meta'
+	abbrevre = '{' + xmlns_proposed + '}abbrev'
+	sections = tree.xpath('//akn:section[not(contains(@status, "repealed"))]',
+		namespaces={'akn': xmlns})
+	abbrev = ''
+	if do_abbrev:
+		el = tree.getroot()[0]
+		for subel in el:
+			if subel.tag != metare and abbrevre in subel[0].attrib:
+				abbrev = subel[0].attrib[abbrevre] + ' '
+	for section in sections:
 		enum = ''
 		heading = ''
 		text = ''
-		if do_numbers:
-			num = section.find('num')
-			if num is not None:
-				enum = num.text+'. '
-		if do_headings:
-			head = section.find('heading')
-			if head is not None:
-				heading = head.text+'. '
-		if do_text:
-			text = ' '.join([re.sub('<[^<]+?>', '', etree.tostring(p, encoding=str)) for p in section.findall('.//p')])
-		print(enum + heading + text)
+		if do_number:
+			el = section.find(numre)
+			if el is not None:
+				enum = el.text+'. '
+		if do_heading:
+			el = section.find(headingre)
+			if el is not None:
+				heading = el.text+'. '
+		if do_content:
+			el = section.iterfind(contentre)
+			content = ' '.join(s for s in [re.sub('\n', ' ', ''.join(subel.itertext())) for subel in el])
+		print(abbrev + enum + heading + content)
 
 if __name__ == "__main__":
 	main()
