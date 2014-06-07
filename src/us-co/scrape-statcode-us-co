@@ -1,0 +1,967 @@
+#! /usr/bin/python3 -uW all
+# -*- coding: utf-8 -*-
+
+usage="""
+scrape-statcode-us-co - convert the Colorado Revised Statutes into Akoma Ntoso
+
+See <https://en.wikipedia.org/wiki/Colorado_Revised_Statutes>. Given titles as
+RTF files, in order, this will output them as an Akoma Ntoso XML file.
+
+Usage:	scrape-statcode-us-co [options] file [file ...]
+Arguments:
+
+	file		input RTF file from the bulk download site
+	-o file		output file ('-' for stdout) (default: stdout)
+	-n threads	number of parallel threads (default: 2)
+	-d		enable debuging output (more for more verbosity)
+"""
+
+import sys
+import os
+import getopt
+import lxml.etree as etree
+import uno
+import unohelper
+import shlex
+import subprocess
+import time
+import logging
+import mimetypes
+import enum
+import collections
+import concurrent.futures
+
+##
+# Entry function: Parse paramters, call main function.
+#
+def main():
+	fout = sys.stdout.buffer
+	debug = logging.WARNING
+	threads = 2
+	logging.SUPERDEBUG = logging.DEBUG-2 # XXX monkey fix
+	logging.UBERDEBUG = logging.DEBUG-4
+
+	# parse arguments
+	try:
+		opts, args = getopt.getopt(sys.argv[1:], 'o:dn:h')
+	except getopt.GetoptError:
+		logging.fatal('getopt error {}'.format(usage))
+		return 1
+
+	for opt, arg in opts:
+		if opt in {'-d', '--debug'}:
+			if debug is logging.WARNING:
+				debug = logging.INFO
+			elif debug is logging.INFO:
+				debug = logging.DEBUG
+			elif debug is logging.DEBUG:
+				debug = logging.SUPERDEBUG
+			else:
+				debug = logging.UBERDEBUG
+		elif opt in {'-o'}:
+			fout = arg
+		elif opt in {'-n'}:
+			threads = int(arg)
+		elif opt in {'-h', '--help'}:
+			print(opt, usage)
+			return 0
+		else:
+			logging.fatal('invalid flag {}{}'.format(opt, usage))
+			return 1
+
+	if len(args) < 1:
+		logging.fatal('need input files {}'.format(usage))
+		return 1
+	fns = args
+
+	# configure
+	logging.basicConfig(format='{levelname:8s}: {message}', style='{', level=debug)
+	logging.addLevelName(logging.SUPERDEBUG, 'SUPERDEBUG')
+	logging.addLevelName(logging.UBERDEBUG, 'UBERDEBUG')
+#	logging.Logger.superdebug = lambda inst, msg, *args, **kwargs: inst.log(logging.SUPERDEBUG, msg, *args, **kwargs)
+	logging.superdebug = lambda msg, *args, **kwargs: logging.log(logging.SUPERDEBUG, msg, *args, **kwargs)
+#	logging.Logger.uberdebug = lambda inst, msg, *args, **kwargs: inst.log(logging.UBERDEBUG, msg, *args, **kwargs)
+	logging.uberdebug = lambda msg, *args, **kwargs: logging.log(logging.UBERDEBUG, msg, *args, **kwargs)
+
+	# start soffice
+	p = spawn_soffice()
+	time.sleep(5)
+
+	# do it
+	ret = do_it(fns, fout, threads)
+
+	# cleanup
+	logging.info('done. cleaning up.')
+#	fout.close()
+	if ret == 0:
+		terminate_soffice(connect_soffice(tries=30))
+	p.wait()
+
+	return ret
+
+##
+# Execute do_parse() against given filenames in parallel.
+#
+def do_it(fns, fout, threads):
+	ret = 0
+	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14", "proposed": "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed"})
+	act = etree.SubElement(akn, 'act', attrib={'name': 'title'})
+	meta = etree.SubElement(act, 'meta')
+	body = etree.SubElement(act, 'body')
+	executor = concurrent.futures.ProcessPoolExecutor(max_workers=threads)
+	try:
+		for xml in executor.map(do_parse, fns):
+			if xml is None:
+				raise RuntimeError('do_parse failed: xml is None')
+			xml = etree.fromstring(xml) # XXX lxml cannot be pickled
+			body.append(xml)
+	except BaseException as e:
+		logging.fatal('do_it exception: {} {}'.format(type(e), e))
+		executor.shutdown()
+		ret = 1
+	else:
+		tree = etree.ElementTree(akn)
+		tree.write(fout)
+	return ret
+
+##
+# Parse a file and return partial Akoma Ntoso XML.
+#
+def do_parse(fn):
+	logging.info('do_parse parsing: {}'.format(fn))
+	UNORuntimeException = uno.getClass('com.sun.star.uno.RuntimeException')
+	xml = None
+	# get desktop
+	desktop = connect_soffice()
+	if not desktop:
+		logging.fatal('do_parse desktop')
+		return None
+	# open files
+	try:
+		mime = mimetypes.guess_type(fn)
+		if mime[0] == 'application/rtf':
+			fin = OOFile(desktop, fn)
+		else:
+			logging.fatal('do_parse unknown filetype: {} {}'.format(fn, mime))
+			return None
+	except OSError as e:
+		logging.fatal('do_parse opening files: {}'.format(e))
+		return None
+	# parse
+	try:
+		parser = OOFileParser()
+		builder = XMLBuilder()
+		xml = builder.parse(parser.parse(fin))
+		fin.close()
+	except BaseException as e:
+		logging.fatal('do_parse exception: {} {}'.format(type(e), e))
+	return xml
+
+##
+# A state machine that parses a stream of semi-structured document lines
+# into partial Akoma Ntoso XML. The parse() function will consume the input
+# and output an XML object.
+#
+class XMLBuilder:
+	def __init__(self):
+		# `state' is an ordered dictionary with the top-most
+		# element of each type, which represents our heirarchy
+		# of elements
+		self.state = collections.OrderedDict()
+		self.state['title'] = None
+		self.state['article'] = None
+		self.state['part'] = None
+		self.state['subpart'] = None
+		self.state['section'] = None
+		self.state['subsection'] = None
+		self.state['paragraph'] = None
+		self.state['subparagraph'] = None
+		self.state['subsubparagraph'] = None
+	##
+	# Parse all signals in `fin' and return an XML object as string.
+	#
+	def parse(self, fin):
+		akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14", "proposed": "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed"})
+		act = etree.SubElement(akn, 'act', attrib={'name': 'title'})
+		meta = etree.SubElement(act, 'meta')
+		body = etree.SubElement(act, 'body')
+		if fin is None:
+			return
+		# process signals
+		for signal in fin:
+			logging.superdebug('XMLBuilder.parse: {}'.format(signal))
+			self.event(signal)
+		# get and return top node
+		for key in self.state.keys():
+			if self.state[key] is not None:
+#				return self.state[key] # XXX lxml cannot be pickled
+				return etree.tostring(self.state[key])
+	##
+	# Process a signal.
+	#
+	# We get 4 signal types: 'heirarchy', 'section', 'subsection', 'subheader'.
+	#
+	def event(self, signal):
+		supertyp = signal['type']
+		if supertyp in {'heirarchy', 'section', 'subsection'}:
+			self.event_heirarchy(signal)
+		elif supertyp in {'subheader'}:
+			self.event_heirarchy_header(signal)
+		else:
+			raise RuntimeError('XMLBuilder: unknown event: {}'.format(signal))
+	##
+	# All heirarchical elements are essentially the same, except that only
+	# sections and below have content and have different ID algorithms.
+	#
+	def event_heirarchy(self, signal):
+		supertyp, enum, head, text, status = signal['type'], signal['enum'], signal['heading'], signal['content'], signal['status']
+		# get the type
+		if supertyp == 'heirarchy':
+			typ = signal['subtype']
+		elif supertyp == 'subsection':
+			typ = self.heirarchy_type(enum)
+		else:
+			typ = supertyp
+		assert type(typ) == str
+		# create element
+		el = etree.Element(typ)
+		# info
+#		el.attrib['name'] = self.get_name(typ, enum)
+#		el.attrib['id'] = self.get_id(supertyp, typ, enum)
+		name = self.get_name(typ, enum)
+		assert type(name) == str
+		el.attrib['name'] = name
+		id = self.get_id(supertyp, typ, enum)
+		assert type(id) == str
+		el.attrib['id'] = id
+		# end XXX
+		if status:
+			assert type(status) == str
+			el.attrib['status'] = status
+		if enum:
+			assert type(enum) == str
+			nel = etree.SubElement(el, 'num')
+			nel.text = enum
+		if head:
+			assert type(head) == str
+			hel = etree.SubElement(el, 'heading')
+			hel.text = head
+		if text:
+			assert type(text) == str
+			tel = etree.SubElement(el, 'content')
+			pel = etree.SubElement(tel, 'p')
+			pel.text = text
+		# get parent (only title has no parent) and attach
+		parentel = self.get_state_parent(typ)
+		if parentel is not None:
+			parentel.append(el)
+		else:
+			logging.warning('event_section no parent: {}'.format(signal))
+		# update state
+		self.set_state(el, typ)
+	def event_heirarchy_header(self, signal):
+		head, weight, status = signal['heading'], signal['weight'], signal['status']
+		# do status
+		if status is not None:
+			parent = self.get_state_parent('section') # get bottom-most heriarchy element
+			if parent is not None:
+				assert type(status) == str
+				if 'status' in parent.attrib:
+					parent.attrib['status'] += ' ' + status
+				else:
+					parent.attrib['status'] = status
+			else:
+				logging.warning('event_heirarchy_header no parent: {} {}'.format(signal, self.state))
+		# TODO merge both these
+		# do header
+		if head is None:
+			pass
+		elif weight != 'bold':
+			parent = self.get_state_parent('section') # get bottom-most heriarchy element
+			if parent is not None:
+				assert type(head) == str
+				hel = parent.find('heading')
+				if hel is not None:
+					hel.text += ' ' + head
+				else:
+					hel = etree.SubElement(parent, 'heading')
+					hel.text = head
+			else:
+				logging.warning('event_heirarchy_header no parent: {} {}'.format(signal, self.state))
+		else:
+			logging.warning('event_heirarchy_header ignore: {}'.format(signal))
+	##
+	# Determine the type of element from its enumeration.
+	#
+	# Note that 'I' may be a subparagraph, or it may be a
+	# sub-subparagraph that comes after 'H' etc.
+	#
+	#  -------------------------
+	# |  s   |       type       |
+	#  -------------------------
+	# |  1   | subsection       |
+	# |  a   | paragraph        |
+	# |  IV  | subparagraph     |
+	# |  A   | sub-subparagraph |
+	#  -------------------------
+	#
+	def heirarchy_type(self, s):
+		ret = 'subsection'
+		if s.isdecimal():
+			ret = 'subsection'
+		elif s.islower():
+			ret = 'paragraph'
+		elif 'I' not in s and 'V' not in s and 'X' not in s:
+			ret = 'subsubparagraph'
+		elif s == 'I' and self.state['subsubparagraph'] is not None and self.state['subsubparagraph'][0] == 'H':
+			ret = 'subsubparagraph'
+		elif s == 'V' and self.state['subsubparagraph'] is not None and self.state['subsubparagraph'][0] == 'U':
+			ret = 'subsubparagraph'
+		elif s == 'X' and self.state['subsubparagraph'] is not None and self.state['subsubparagraph'][0] == 'W':
+			ret = 'subdivision'
+		else:
+			logging.superdebug('heirarchy_type assume roman num: {}'.format(s))
+			ret = 'subparagraph'
+		return ret
+	##
+	#
+	#
+	def get_name(self, typ, enum):
+		assert typ is not None
+		name = typ[0].upper() + typ[1:]
+		if enum is not None: # XXX if no enum, is this required to be unique?
+			name += ' ' + enum
+		return name
+	##
+	# XXX requires non-None parent to have id attribute?
+	#
+	def get_id(self, supertyp, typ, enum):
+		assert supertyp is not None and typ is not None and enum is not None
+		parentel = self.get_state_parent(typ)
+		if parentel is None:
+			# XXX only top-most element's parent will be None?
+			ident = '/' + typ + '-' + enum
+		elif supertyp == 'section':
+			superparentel = self.get_state_superparent()
+			ident = superparentel.attrib['id'] + '/' + typ + '-' + enum
+		elif supertyp == 'heirarchy':
+			ident = parentel.attrib['id'] + '/' + typ + '-' + enum
+		elif supertyp == 'subsection':
+			ident = parentel.attrib['id'] + '/' + enum
+		else:
+			logging.fatal('get_id unknown supertype: {}'.format(supertyp))
+			raise RuntimeError('get_id unknown supertype: {}'.format(supertyp))
+		return ident
+	##
+	# Get the lowest non-None element above type, or None if its the highest.
+	#
+	def get_state_parent(self, typ):
+		# get a reversed list of keys above typ
+		keys = list(self.state.keys())
+		keys = reversed(keys[:keys.index(typ)])
+		# get bottom-most element above typ
+		for key in keys:
+			if self.state[key] is not None:
+				return self.state[key]
+		return None
+	##
+	# Get the top-most element.
+	#
+	def get_state_superparent(self):
+		return self.state[list(self.state.keys())[0]]
+	##
+	# Update (and normalize) state.
+	#
+	def set_state(self, el, typ):
+		# update state
+		self.state[typ] = el
+		# normalize state: clear all elements below type from state
+		keys = list(self.state.keys())
+		keys = keys[keys.index(typ)+1:]
+		for key in keys:
+			self.state[key] = None
+
+##
+# A state machine program that parses a stream of semi-structured lines into
+# a stream of structured elements.
+#
+# Its essentially a Mealy machine, whose output is a list of
+# structured elements, which are returned on event(). The parse() function
+# will drive the event loop and yield each such line.
+#
+# XXX need to track down those random heirarchical subheadings that
+# pop up out of nowhere, and make sure they are not getting picked up
+# as text
+#
+class OOFileParser:
+	class StateEnum(enum.IntEnum):
+		init = 1 # TODO needed?
+		idle = 3
+		heirarchy = 4
+		section = 5
+		section_idle = 6
+		section_note = 7
+		section_note_one = 8
+		section_note_two = 9
+		text = 10
+	def __init__(self):
+		self.state = self.StateEnum.init
+		self.last_line_ended_with_colon = False
+	##
+	# Consume an event and return a list of structured elements
+	# in the form of {'type':, 'enum':, 'heading':, 'content':}.
+	#
+	# The event function is chosen by current state; the transition
+	# function is (then) chosen by current state and the signal. As such,
+	# its output is chosen by current state and the signal as well.
+	#
+	def event(self, signal):
+		# XXX strip line
+		signal['line'] = signal['line'].strip()
+		# XXX fixups
+		signal['line'] = OOFileParser.fixup(signal['line'])
+		#
+		if self.state == self.StateEnum.init:
+			ret = self.event_init(signal)
+		elif self.state == self.StateEnum.idle:
+			ret = self.event_idle(signal)
+		elif self.state == self.StateEnum.heirarchy:
+			ret = self.event_heirarchy(signal)
+		elif self.state == self.StateEnum.section:
+			ret = self.event_section(signal)
+		elif self.state == self.StateEnum.section_note:
+			ret = self.event_section_note(signal)
+		elif self.state == self.StateEnum.section_note_one:
+			ret = self.event_section_note_one(signal)
+		elif self.state == self.StateEnum.section_note_two:
+			ret = self.event_section_note_two(signal)
+		elif self.state == self.StateEnum.text:
+			ret = self.event_text(signal)
+		# XXX keep track of centered text preceeded by lines ending with ':'
+		if self.state != self.StateEnum.idle:
+			self.last_line_ended_with_colon = signal['line'].endswith(':')
+		#
+		return ret
+	def event_init(self, signal):
+		logging.uberdebug('init')
+		# XXX skip first line
+		return self.transition_idle(signal)
+	def event_idle(self, signal):
+		logging.uberdebug('idle')
+		line, adjust, lmargin = signal['line'], signal['adjust'], signal['lmargin']
+		if line == '':
+			return self.transition_self(signal)
+		elif lmargin > 0:
+			return self.transition_text(signal)
+		elif OOFileParser.test_sec(line, adjust):
+			return self.transition_section(signal)
+		elif OOFileParser.test_subsec(line, adjust):
+			return self.transition_subsection(signal)
+		elif OOFileParser.test_heirarchy(line):
+			return self.transition_heirarchy(signal)
+		# XXX should we only be able to enter subheader state
+		# from heirarchy state to prevent mistaking text for subheaders?
+#		elif adjust == 'center' and not line.startswith('WARNING'):
+		elif adjust == 'center' and self.last_line_ended_with_colon is False:
+			return self.transition_subheader(signal)
+		else:
+			# assume text attached to previous section/subsection
+			return self.transition_text(signal)
+	def event_heirarchy(self, signal):
+		logging.uberdebug('heirarchy')
+		line, adjust = signal['line'], signal['adjust']
+		if line == '':
+			# don't transition because we may get subheader
+			return self.transition_self(signal)
+		elif OOFileParser.test_sec(line, adjust):
+			return self.transition_section(signal)
+		elif OOFileParser.test_heirarchy(line):
+			return self.transition_heirarchy(signal)
+		elif adjust == 'center': # XXX should we test on last_line_ended_with_colon?
+			return self.transition_subheader(signal)
+		else: # XXX is there something better to do here? will a subheader ever not be centered?
+			return self.transition_text(signal)
+	def event_section(self, signal):
+		logging.uberdebug('section')
+		line, adjust = signal['line'], signal['adjust']
+		if line == '':
+			return self.transition_idle(signal)
+		# XXX put fixups into fixups()?
+		elif line.endswith('\xa0weeks') or line == 'the use of an artificial limb':
+			# fixup 8-42-107
+			return self.transition_text(signal)
+		elif line.startswith('$'):
+			# fixup 9-4-109
+			return self.transition_text(signal)
+		elif OOFileParser.test_sec(line, adjust):
+			return self.transition_section(signal)
+		elif OOFileParser.test_subsec(line, adjust):
+			return self.transition_subsection(signal)
+		elif "Editor's note" in line:
+			return self.transition_section_note(signal)
+		else: # XXX is there something better to do here?
+			return self.transition_text(signal)
+	def event_section_note(self, signal):
+		logging.uberdebug('section_note')
+		line = signal['line']
+		if line == '':
+			return self.transition_section_note_one(signal)
+		else:
+			raise RuntimeError('event_section_note ERROR: {}'.format(repr(line)))
+	def event_section_note_one(self, signal):
+		logging.uberdebug('section_note_one')
+		line, adjust = signal['line'], signal['adjust']
+		if line == '':
+			return self.transition_section_note_two(signal)
+		elif OOFileParser.test_sec(line, adjust):
+			return self.transition_section(signal)
+		elif OOFileParser.test_subsec(line, adjust):
+			return self.transition_subsection(signal)
+		else:
+			raise RuntimeError('event_section_note_one ERROR: {}'.format(repr(line)))
+	def event_section_note_two(self, signal):
+		logging.uberdebug('section_note_two')
+		line, adjust = signal['line'], signal['adjust']
+		if line == '':
+			return self.transition_idle(signal)
+		elif OOFileParser.test_subsec(line, adjust):
+			return self.transition_subsection(signal)
+		elif OOFileParser.test_sec(line, adjust):
+			return self.transition_section(signal)
+		else:
+			logging.warning('section_note_two assume heirarchy: {}'.format(signal))
+			return self.transition_heirarchy(signal)
+	def event_text(self, signal):
+		logging.uberdebug('text')
+		line, adjust, lmargin = signal['line'], signal['adjust'], signal['lmargin']
+		if line == '':
+			return self.transition_self(signal)
+		elif lmargin > 0:
+			return self.transition_text(signal)
+		elif line.endswith('\xa0weeks') or line == 'the use of an artificial limb':
+			# XXX fixup 8-42-107
+			return self.transition_text(signal)
+		elif line.startswith('$'):
+			# fixup various
+			return self.transition_text(signal)
+		elif OOFileParser.test_sec(line, adjust):
+			return self.transition_section(signal)
+		elif OOFileParser.test_subsec(line, adjust):
+			return self.transition_subsection(signal)
+		elif OOFileParser.test_heirarchy(line):
+			return self.transition_heirarchy(signal)
+		else:
+			# assume text attached to previous section/subsection
+			return self.transition_text(signal)
+	def transition_self(self, signal):
+		logging.uberdebug('self: {}'.format(signal))
+		return []
+	def transition_idle(self, signal):
+		logging.uberdebug('idle: {}'.format(signal))
+		self.state = self.StateEnum.idle
+		return []
+	def transition_heirarchy(self, signal):
+		logging.debug('heirarchy: {}'.format(signal))
+		line = signal['line']
+		typ,enum = line.split(' ',1)
+		typ = typ.lower()
+		output = {'type': 'heirarchy', 'subtype': typ, 'name': line, 'enum': enum, 'heading': None, 'content': None, 'status': None}
+		self.state = self.StateEnum.heirarchy
+		return [output]
+	def transition_subheader(self, signal):
+		logging.debug('subheader: {}'.format(signal))
+		line, weight = signal['line'], signal['weight']
+		head, status = OOFileParser.parse_subheader(line)
+		output = {'type': 'subheader', 'name': None, 'enum': None, 'heading': head, 'content': None, 'status': status, 'weight': weight}
+		self.state = self.StateEnum.heirarchy
+		return [output]
+	def transition_section(self, signal):
+		logging.uberdebug('section: {}'.format(signal))
+		sec = OOFileParser.tokenize_section(signal['line']) # return enum, head, status, text, subsecl
+		logging.uberdebug('section sec: {}'.format(sec))
+		ret = [{'type': 'section', 'name': None, 'enum': sec[0], 'heading': sec[1], 'content': sec[3], 'status': sec[2]}]
+		subsec = sec[4] # return enum, status, text, subsecl
+		while subsec is not None:
+			logging.uberdebug('section subsec: {}'.format(subsec))
+			ret.append({'type': 'subsection', 'name': None, 'enum': subsec[0], 'heading': None, 'content': subsec[2], 'status': subsec[1]})
+			subsec = subsec[3]
+		self.state = self.StateEnum.section
+		return ret
+	def transition_subsection(self, signal):
+		logging.uberdebug('subsection: {}'.format(signal))
+		subsec = OOFileParser.tokenize_subsection(signal['line']) # return enum, status, text, subsecl
+		ret = []
+		while subsec is not None:
+			logging.uberdebug('subsection subsec: {}'.format(subsec))
+			ret.append({'type': 'subsection', 'name': None, 'enum': subsec[0], 'heading': None, 'content': subsec[2], 'status': subsec[1]})
+			subsec = subsec[3]
+		self.state = self.StateEnum.section
+		return ret
+	def transition_section_note(self, signal):
+		logging.uberdebug('section_note: {}'.format(signal))
+		self.state = self.StateEnum.section_note
+		return []
+	def transition_section_note_one(self, signal):
+		logging.uberdebug('section_note_one: {}'.format(signal))
+		self.state = self.StateEnum.section_note_one
+		return []
+	def transition_section_note_two(self, signal):
+		logging.uberdebug('section_note_two: {}'.format(signal))
+		self.state = self.StateEnum.section_note_two
+		return []
+	def transition_text(self, signal):
+		logging.debug('text: {}'.format(signal))
+		self.state = self.StateEnum.text
+		return []
+	#
+	# XXX these methods are complete hacks
+	#
+	@staticmethod
+	def test_sec(line, adjust):
+		return len(line) and '.\xa0' in line and '-' in line and line.split('-',1)[0][-1].isdigit() and adjust != 'center' and line[0].isdigit()
+	@staticmethod
+	def test_subsec(line, adjust):
+		return len(line) and '\xa0' in line and line[0] == '(' and ')' in line and adjust != 'center' and ' ' not in line.split(')',1)[0] and '_' not in line.split(')',1)[0] and '\xa0' not in line.split(')',1)[0]
+	@staticmethod
+	def test_heirarchy(line):
+		# XXX should there be a space after each?
+		# XXX is it always a digit after the word?
+		# XXX Title 24, Article 60, Part 22/25 have articles within!?
+		return len(line) and (line.startswith('TITLE ') and line.split('TITLE ',1)[1][0].isdigit() or line.startswith('PART ') and line.split('PART ',1)[1][0].isdigit() or line.startswith('SUBPART ') and line.split('SUBPART ',1)[1][0].isdigit() or line.startswith('ARTICLE ') and line.split('ARTICLE ',1)[1][0].isdigit()) and not line.endswith('.')
+	##
+	#
+	#
+	@staticmethod
+	def parse_subheader(s):
+		status = None
+		if s.endswith('(Reserved)'):
+			s,_ = s.rsplit('(Reserved)',1)
+			status = 'reserved'
+		return s or None, status
+	##
+	# Return a parsed section and with any subsection(s).
+	#
+	# XXX sometimes the header element has the first enum, e.g., 'header (a)'
+	#
+	@staticmethod
+	def tokenize_section(line):
+		l = line.split('\xa0')
+		logging.uberdebug('tokenize_section: {}'.format(l))
+		l = [s.strip() for s in l]
+		enum = head = status = subsecl = None
+		textl = [] # TODO should we join? or should they be separate <p>?
+		for n,s in enumerate(l):
+			if s == '':
+				pass
+			elif enum is None:
+				enum = OOFileParser.parse_sec_enum(s)
+				logging.uberdebug('tokenize_section enum: {}'.format(enum))
+			elif head is None:
+				head,status = OOFileParser.parse_sec_head(s)
+				logging.uberdebug('tokenize_section head: {} {}'.format(head, status))
+			elif OOFileParser.test_enum(s):
+				subsecl = OOFileParser.tokenize_subsection_r(l[n:])
+				break # input has been consumed
+			else:
+				textl.append(s)
+		text = str.join(' ', textl) or None
+		return enum, head, status, text, subsecl
+	##
+	# Return a parsed section string.
+	#
+	@staticmethod
+	def parse_sec_enum(s):
+		return s.rstrip('.')
+	##
+	# Return a parsed heading string.
+	#
+	@staticmethod
+	def parse_sec_head(s):
+		status = None
+		if s.endswith('(Repealed)'):
+			s,_ = s.rsplit('(Repealed)',1)
+			status = 'repealed'
+		return s.strip().rstrip('.'), status
+	##
+	# Return a parsed subsection.
+	#
+	@staticmethod
+	def tokenize_subsection(line):
+		l = line.split('\xa0')
+		logging.uberdebug('tokenize_subsection: {}'.format(l))
+		l = [s.strip() for s in l]
+		ret = OOFileParser.tokenize_subsection_r(l)
+		return ret
+	##
+	# Parse subsection(s) from a simply tokenized string.
+	#
+	# XXX whether its a sub-subsection or another type should be
+	# decided at higher layers
+	#
+	@staticmethod
+	def tokenize_subsection_r(l):
+		logging.uberdebug('tokenize_subsection_r: {}'.format(l))
+		enum = status = subsecl = None
+		textl = []
+		for n,s in enumerate(l):
+			if s == '':
+				pass
+			# this subsection's enum
+			elif enum is None:
+				enum,text = OOFileParser.parse_subsec_enum(s)
+				logging.uberdebug('tokenize_subsection_r enum: {} {}'.format(repr(enum), repr(text)))
+				if text is not None:
+					textl.append(text)
+			# repealed
+			# XXX this should be a note or history
+			elif OOFileParser.test_subsec_repealed(s):
+				textl.append(OOFileParser.parse_subsec_repealed(s))
+				status = 'repealed'
+			# enum indicating a new sub-subsection
+			elif OOFileParser.test_enum(s):
+				logging.uberdebug('tokenize_subsection_r recurs: {}'.format(l[n:]))
+				subsecl = OOFileParser.tokenize_subsection_r(l[n:])
+				break # input has been consumed
+			# text for this subsection
+			else:
+				logging.uberdebug('tokenize_subsection_r text: {}'.format(s))
+				textl.append(s)
+		text = str.join(' ', textl)
+		if text == 'Repealed.' or text == 'Repealed':
+			text = None
+			status = 'repealed'
+		text = text or None
+		return enum, status, text, subsecl
+	##
+	# Test if string represents an enumeration.
+	#
+	@staticmethod
+	def test_enum(s):
+	#	if s[0] == '(' or '(' in s and s[-1] == ')':
+		if len(s) >= 3 and (s[0] == '(' or '(' in s and s[-1] == ')') and s[-2] != '.':
+			return True
+#		elif s[0] == '(' and s[-1] == ')' and (') to (' in s or ') and (' in s):
+#			return True
+		return False
+	##
+	# Parse and return an enumeration and text before enumeration (if any).
+	#
+	# XXX how to specify range values for num in Akoma Ntoso?
+	# XXX how will choice of enum affect id attribute? whitespace?
+	#
+	@staticmethod
+	def parse_subsec_enum(s):
+		if ') to (' in s:
+			one,two = s.strip('(').split(') to (')
+			two,text = two.split(')',1)
+			enum = one + ' to ' + two
+		elif ') and (' in s:
+			one,two = s.strip('(').split(') and (')
+			two,text = two.split(')',1)
+			enum = one + ' and ' + two
+		else:
+			enum,text = s.split(')',1)
+			if len(text) and text[0] == ' ':
+				# fixup '(num) text'
+				text = text.strip()
+			enum = enum.strip('(').strip(')')
+		return enum, text or None
+	##
+	#
+	#
+	@staticmethod
+	def test_subsec_repealed(s):
+		return s.startswith('(Deleted')
+	##
+	# XXX this should be a note or history
+	#
+	@staticmethod
+	def parse_subsec_repealed(s):
+		return s.strip('(').strip(')')
+	##
+	# Perform specific fixups on string and return fixed-up string.
+	#
+	@staticmethod
+	def fixup(line):
+		orig = line
+		# sections
+		line = line.replace('this part\xa05', 'this part 5')
+		line = line.replace('property\xa0-\xa0nonprofit', 'property - nonprofit')
+		line = line.replace('defend\xa0-\xa0standing', 'defend - standing')
+		line = line.replace('complaint\xa0-\xa0service', 'complaint - service')
+		line = line.replace('article\xa064', 'article 64')
+		line = line.replace('8-17-105.Compliance standard.', '8-17-105.\xa0\xa0Compliance standard.')
+		# subsections
+		if line.startswith('(4)  '):
+			line = '(4)\xa0\xa0' + line[5:]
+		elif line.startswith('(II) '):
+			line = '(II)\xa0\xa0' + line[5:]
+		line = line.replace('this part\xa05', 'this part 5')
+		line = line.replace('BTU/H\xa0FT', 'BTU/H FT')
+		line = line.replace('by section\xa07-62-1104', 'by section 7-62-1104')
+		line = line.replace('of subsections\xa0(1) and', 'of subsections (1) and')
+		line = line.replace('title\xa0shall', 'title shall')
+		line = line.replace('article\xa060', 'article 60')
+		line = line.replace('section\xa05-12-102', 'section 5-12-102')
+		line = line.replace('section\xa07-64-1205', 'section 7-64-1205')
+		line = line.replace('section\xa07-64-601', 'section 7-64-601')
+		# can't remember
+		line = line.replace('article\xa0V', 'article V')
+		line = line.replace('§§\xa01', '§§ 1')
+		line = line.replace(' §\xa038-35-106.5', ' § 38-35-106.5')
+		# ret
+		if orig is not line:
+			logging.warning('fixup replace: {} {}'.format(repr(orig), repr(line)))
+		return line
+	##
+	# Yield {'type':, 'enum':, 'heading':, 'content':} for all lines in OOFile.
+	#
+	def parse(self, fin):
+		if fin is None:
+			return
+		for signal in fin:
+			yield from self.event(signal)
+
+##
+#
+#
+def spawn_soffice(pipename='officepipe'):
+	cmd = 'soffice --accept="pipe,name='+pipename+';urp;StarOffice.ServiceManager" --norestore --nologo --headless --nolockcheck'
+	cmdl = shlex.split(cmd)
+	p = subprocess.Popen(cmdl, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True, universal_newlines=True)
+	p.stdin.close()
+#	p.stdout.read() # TODO needed?
+	p.stdout.close()
+	return p
+
+##
+# Connect to a running soffice instance and return a XDesktop object.
+#
+def connect_soffice(pipename='officepipe', tries=3):
+	context = None
+	desktop = None
+	local = uno.getComponentContext()
+	resolver = local.ServiceManager.createInstanceWithContext('com.sun.star.bridge.UnoUrlResolver', local)
+	resolvurl = 'uno:pipe,name='+pipename+';urp;StarOffice.ComponentContext'
+	for i in range(tries):
+		try:
+			context = resolver.resolve(resolvurl)
+		except BaseException as e:
+			logging.warning('failed to connect {} / {} ... retrying in 5 seconds'.format(i+1, tries))
+			time.sleep(5)
+	if context:
+		desktop = context.ServiceManager.createInstanceWithContext('com.sun.star.frame.Desktop', context)
+	else:
+		logging.debug('failed to connect to soffice')
+	return desktop
+
+##
+#
+#
+def terminate_soffice(desktop):
+	if desktop is None:
+		return False
+	try:
+		desktop.terminate() # kills soffice
+	except uno.getClass('com.sun.star.lang.DisposedException'): # XXX needed?
+		return False
+	return True
+
+##
+#
+#
+class OOFile():
+	##
+	# Open a file and return its UNO XText.
+	#
+	def __init__(self, desktop, filename):
+		self.doc = None
+
+		url = unohelper.systemPathToFileUrl(os.path.abspath(filename))
+		try:
+			doc = desktop.loadComponentFromURL(url ,'_blank', 0, ())
+			self.doc = doc
+		except uno.getClass('com.sun.star.lang.IllegalArgumentException') as e:
+			self.close()
+			raise FileNotFoundError('file not found: {}'.format(filename))
+	##
+	# See __iter().
+	#
+	def __iter__(self):
+		return self.__iter()
+	##
+	# Get an XEnumeration of objects from a given object supporting the
+	# XEnumerationAccess interface.
+	#
+	@staticmethod
+	def XEnumeration(obj):
+		xenum = obj.createEnumeration()
+		while xenum.hasMoreElements():
+			yield xenum.nextElement()
+	##
+	# Iterate over paragraphs in an UNO XText object and yield signals.
+	#
+	# See <http://wiki.services.openoffice.org/wiki/Documentation/DevGuide/Text/Iterating_over_Text>.
+	#
+	def __iter(self):
+		# get the com.sun.star.text.Text service and get an XEnumeration of com.sun.star.text.Paragraph objects from the XEnumerationAccess
+		for para in OOFile.XEnumeration(self.doc.getText()):
+			lmargin = None
+			adjust = 'unknown'
+			weightn = -1
+			# skip non-paragraphs
+			if not para.supportsService('com.sun.star.text.Paragraph'):
+				continue
+			# get left margin
+			if para.supportsService('com.sun.star.style.ParagraphProperties') and hasattr(para, 'ParaLeftMargin'):
+				lmargin = para.ParaLeftMargin
+			# get adjustment
+			if para.supportsService('com.sun.star.style.ParagraphProperties') and hasattr(para, 'ParaAdjust'):
+				adjustn = para.ParaAdjust
+				if adjustn == 3: # com.sun.star.style.ParagraphAdjust
+					adjust = 'center'
+				elif adjustn == 0:
+					adjust = 'left'
+				elif adjustn == 2:
+					adjust = 'block'
+				else:
+					logging.warning('OOFile unknown adjust: {}'.format(adjustn))
+					adjust = 'unknown'
+			ss = []
+			# get an XEnumeration of com.sun.star.text.TextPortion objects
+			for portion in OOFile.XEnumeration(para):
+				if portion.TextPortionType == 'Text':
+					s = portion.getString()
+					# get the last weight
+					if portion.supportsService('com.sun.star.style.CharacterProperties') and hasattr(portion, 'CharWeight'):
+						weightn = portion.CharWeight
+					ss.append(s)
+			# interpret data
+			s = str.join('', ss)
+			if round(weightn) == 100: # com.sun.star.awt.FontWeight
+				weight = 'normal'
+			elif round(weightn) == 150:
+				weight = 'bold'
+			elif weightn == -1:
+				weight = 'unknown'
+			else:
+				logging.warning('OOFile unknown weight: {}'.format(weightn))
+				weight = 'unknown'
+			# return signal
+			signal = {'line': s, 'adjust': adjust, 'lmargin': lmargin, 'weight': weight}
+			yield signal
+	##
+	#
+	#
+	def close(self):
+		logging.debug('OOFile closing: {}'.format(self))
+		if self.doc:
+			try:
+				self.doc.dispose()
+			except uno.getClass('com.sun.star.lang.DisposedException'):
+				pass
+
+# do it
+if __name__ == "__main__":
+	sys.exit(main())
+
