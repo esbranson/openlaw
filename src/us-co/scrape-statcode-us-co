@@ -13,7 +13,7 @@ Arguments:
 	file		input RTF file from the bulk download site
 	-o file		output file ('-' for stdout) (default: stdout)
 	-n threads	number of parallel threads (default: 2)
-	-d		enable debuging output (more for more verbosity)
+	-d		enable debuging output (default: warnings only)
 """
 
 import sys
@@ -129,7 +129,6 @@ def do_it(fns, fout, threads):
 #
 def do_parse(fn):
 	logging.info('do_parse parsing: {}'.format(fn))
-	UNORuntimeException = uno.getClass('com.sun.star.uno.RuntimeException')
 	xml = None
 	# get desktop
 	desktop = connect_soffice()
@@ -155,6 +154,7 @@ def do_parse(fn):
 		fin.close()
 	except BaseException as e:
 		logging.fatal('do_parse exception: {} {}'.format(type(e), e))
+	logging.info('do_parse done: {}'.format(fn))
 	return xml
 
 ##
@@ -181,10 +181,6 @@ class XMLBuilder:
 	# Parse all signals in `fin' and return an XML object as string.
 	#
 	def parse(self, fin):
-		akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14", "proposed": "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed"})
-		act = etree.SubElement(akn, 'act', attrib={'name': 'title'})
-		meta = etree.SubElement(act, 'meta')
-		body = etree.SubElement(act, 'body')
 		if fin is None:
 			return
 		# process signals
@@ -222,32 +218,20 @@ class XMLBuilder:
 			typ = self.heirarchy_type(enum)
 		else:
 			typ = supertyp
-		assert type(typ) == str
 		# create element
 		el = etree.Element(typ)
 		# info
-#		el.attrib['name'] = self.get_name(typ, enum)
-#		el.attrib['id'] = self.get_id(supertyp, typ, enum)
-		name = self.get_name(typ, enum)
-		assert type(name) == str
-		el.attrib['name'] = name
-		id = self.get_id(supertyp, typ, enum)
-		assert type(id) == str
-		el.attrib['id'] = id
-		# end XXX
+		el.attrib['name'] = self.get_name(typ, enum)
+		el.attrib['id'] = self.get_id(supertyp, typ, enum)
 		if status:
-			assert type(status) == str
 			el.attrib['status'] = status
 		if enum:
-			assert type(enum) == str
 			nel = etree.SubElement(el, 'num')
 			nel.text = enum
 		if head:
-			assert type(head) == str
 			hel = etree.SubElement(el, 'heading')
 			hel.text = head
 		if text:
-			assert type(text) == str
 			tel = etree.SubElement(el, 'content')
 			pel = etree.SubElement(tel, 'p')
 			pel.text = text
@@ -256,7 +240,7 @@ class XMLBuilder:
 		if parentel is not None:
 			parentel.append(el)
 		else:
-			logging.warning('event_section no parent: {}'.format(signal))
+			logging.debug('event_section no parent: {}'.format(signal))
 		# update state
 		self.set_state(el, typ)
 	def event_heirarchy_header(self, signal):
@@ -265,13 +249,12 @@ class XMLBuilder:
 		if status is not None:
 			parent = self.get_state_parent('section') # get bottom-most heriarchy element
 			if parent is not None:
-				assert type(status) == str
 				if 'status' in parent.attrib:
 					parent.attrib['status'] += ' ' + status
 				else:
 					parent.attrib['status'] = status
 			else:
-				logging.warning('event_heirarchy_header no parent: {} {}'.format(signal, self.state))
+				logging.debug('event_heirarchy_header no parent: {} {}'.format(signal, self.state))
 		# TODO merge both these
 		# do header
 		if head is None:
@@ -279,7 +262,6 @@ class XMLBuilder:
 		elif weight != 'bold':
 			parent = self.get_state_parent('section') # get bottom-most heriarchy element
 			if parent is not None:
-				assert type(head) == str
 				hel = parent.find('heading')
 				if hel is not None:
 					hel.text += ' ' + head
@@ -289,7 +271,7 @@ class XMLBuilder:
 			else:
 				logging.warning('event_heirarchy_header no parent: {} {}'.format(signal, self.state))
 		else:
-			logging.warning('event_heirarchy_header ignore: {}'.format(signal))
+			logging.debug('event_heirarchy_header ignore: {}'.format(signal))
 	##
 	# Determine the type of element from its enumeration.
 	#
@@ -394,6 +376,9 @@ class XMLBuilder:
 # as text
 #
 class OOFileParser:
+	##
+	#
+	#
 	class StateEnum(enum.IntEnum):
 		init = 1 # TODO needed?
 		idle = 3
@@ -404,9 +389,20 @@ class OOFileParser:
 		section_note_one = 8
 		section_note_two = 9
 		text = 10
+	##
+	#
+	#
 	def __init__(self):
 		self.state = self.StateEnum.init
 		self.last_line_ended_with_colon = False
+	##
+	# Yield {'type':, 'enum':, 'heading':, 'content':} for all lines in OOFile.
+	#
+	def parse(self, fin):
+		if fin is None:
+			return
+		for signal in fin:
+			yield from self.event(signal)
 	##
 	# Consume an event and return a list of structured elements
 	# in the form of {'type':, 'enum':, 'heading':, 'content':}.
@@ -811,16 +807,8 @@ class OOFileParser:
 		line = line.replace(' §\xa038-35-106.5', ' § 38-35-106.5')
 		# ret
 		if orig is not line:
-			logging.warning('fixup replace: {} {}'.format(repr(orig), repr(line)))
+			logging.debug('fixup replace: {} {}'.format(repr(orig), repr(line)))
 		return line
-	##
-	# Yield {'type':, 'enum':, 'heading':, 'content':} for all lines in OOFile.
-	#
-	def parse(self, fin):
-		if fin is None:
-			return
-		for signal in fin:
-			yield from self.event(signal)
 
 ##
 #
@@ -837,7 +825,7 @@ def spawn_soffice(pipename='officepipe'):
 ##
 # Connect to a running soffice instance and return a XDesktop object.
 #
-def connect_soffice(pipename='officepipe', tries=3):
+def connect_soffice(pipename='officepipe', tries=5):
 	context = None
 	desktop = None
 	local = uno.getComponentContext()
@@ -864,6 +852,8 @@ def terminate_soffice(desktop):
 	try:
 		desktop.terminate() # kills soffice
 	except uno.getClass('com.sun.star.lang.DisposedException'): # XXX needed?
+		return False
+	except uno.getClass('com.sun.star.uno.RuntimeException'):
 		return False
 	return True
 
@@ -959,6 +949,8 @@ class OOFile():
 			try:
 				self.doc.dispose()
 			except uno.getClass('com.sun.star.lang.DisposedException'):
+				pass
+			except uno.getClass('com.sun.star.uno.RuntimeException'):
 				pass
 
 # do it
