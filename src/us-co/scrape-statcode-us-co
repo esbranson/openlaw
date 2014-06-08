@@ -83,19 +83,8 @@ def main():
 #	logging.Logger.uberdebug = lambda inst, msg, *args, **kwargs: inst.log(logging.UBERDEBUG, msg, *args, **kwargs)
 	logging.uberdebug = lambda msg, *args, **kwargs: logging.log(logging.UBERDEBUG, msg, *args, **kwargs)
 
-	# start soffice
-	p = spawn_soffice()
-	time.sleep(5)
-
 	# do it
 	ret = do_it(fns, fout, threads)
-
-	# cleanup
-	logging.info('done. cleaning up.')
-#	fout.close()
-	if ret == 0:
-		terminate_soffice(connect_soffice(tries=30))
-	p.wait()
 
 	return ret
 
@@ -104,10 +93,15 @@ def main():
 #
 def do_it(fns, fout, threads):
 	ret = 0
+	# start soffice
+	p = spawn_soffice()
+	time.sleep(5)
+	# xml body
 	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14", "proposed": "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed"})
 	act = etree.SubElement(akn, 'act', attrib={'name': 'title'})
 	meta = etree.SubElement(act, 'meta')
 	body = etree.SubElement(act, 'body')
+	# submit and complete tasks
 	executor = concurrent.futures.ProcessPoolExecutor(max_workers=threads)
 	try:
 		for xml in executor.map(do_parse, fns):
@@ -122,6 +116,10 @@ def do_it(fns, fout, threads):
 	else:
 		tree = etree.ElementTree(akn)
 		tree.write(fout)
+	# cleanup
+	logging.info('do_it cleaning up')
+	terminate_soffice(connect_soffice())
+	p.wait()
 	return ret
 
 ##
