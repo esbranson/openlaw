@@ -30,6 +30,8 @@ import mimetypes
 import enum
 import collections
 import concurrent.futures
+import threading
+import queue
 
 ##
 # Entry function: Parse paramters, call main function.
@@ -106,18 +108,20 @@ def do_it(fns, fout, threads):
 	try:
 		for xml in executor.map(do_parse, fns):
 			if xml is None:
+				# breaking cleanly triggers else clause
+				# XXX is this really shutting down executor?
 				raise RuntimeError('do_parse failed: xml is None')
 			xml = etree.fromstring(xml) # XXX lxml cannot be pickled
 			body.append(xml)
 	except BaseException as e:
-		logging.fatal('do_it exception: {} {}'.format(type(e), e))
-		executor.shutdown()
+		logging.critical('do_it exception: {} {}'.format(type(e), e))
 		ret = 1
 	else:
 		tree = etree.ElementTree(akn)
 		tree.write(fout)
 	# cleanup
 	logging.info('do_it cleaning up')
+	executor.shutdown()
 	OOFile.terminate_soffice(OOFile.connect_soffice())
 	p.wait()
 	return ret
@@ -128,32 +132,38 @@ def do_it(fns, fout, threads):
 def do_parse(fn):
 	logging.info('do_parse parsing: {}'.format(fn))
 	xml = None
-	# get desktop
-	desktop = OOFile.connect_soffice()
-	if not desktop:
-		logging.fatal('do_parse desktop')
-		return None
-	# open files
 	try:
+		paraq = queue.Queue(10)
+		xmlq = queue.Queue(5)
+		outq = queue.Queue(0) # we only use 1 or 2
+		# open files, build threads
 		mime = mimetypes.guess_type(fn)
 		if mime[0] == 'application/rtf':
-			fin = OOFile(desktop, fn)
+			filethread = threading.Thread(target=OOFile.run, args=(fn, paraq))
 		else:
-			logging.fatal('do_parse unknown filetype: {} {}'.format(fn, mime))
+			logging.critical('do_parse unknown filetype: {} {}'.format(fn, mime))
 			return None
+		parserthread = threading.Thread(target=OOFileParser.run, args=(paraq, xmlq))
+		builderthread = threading.Thread(target=XMLBuilder.run, args=(xmlq, outq))
+		# parse
+		builderthread.start()
+		parserthread.start()
+		filethread.start()
+		xml = outq.get()
 	except OSError as e:
-		logging.fatal('do_parse opening files: {}'.format(e))
+		logging.critical('do_parse opening files: {}'.format(e))
 		return None
-	# parse
-	try:
-		parser = OOFileParser()
-		builder = XMLBuilder()
-		xml = builder.parse(parser.parse(fin))
-		fin.close()
 	except BaseException as e:
-		logging.fatal('do_parse exception: {} {}'.format(type(e), e))
+		logging.critical('do_parse exception: {} {}'.format(type(e), e))
 	logging.info('do_parse done: {}'.format(fn))
-	return xml
+	# wait for completion of threads
+	filethread.join()
+	parserthread.join()
+	builderthread.join()
+	# return
+	if xml is None:
+		return None
+	return etree.tostring(xml) # NOTE etree.Element cannot be pickled
 
 ##
 # A state machine that parses a stream of semi-structured document lines
@@ -176,20 +186,33 @@ class XMLBuilder:
 		self.state['subparagraph'] = None
 		self.state['subsubparagraph'] = None
 	##
-	# Parse all signals in `fin' and return an XML object as string.
 	#
-	def parse(self, fin):
-		if fin is None:
-			return
-		# process signals
-		for signal in fin:
-			logging.superdebug('XMLBuilder.parse: {}'.format(signal))
-			self.event(signal)
+	#
+	@staticmethod
+	def run(inq, outq):
+		try:
+			builder = XMLBuilder()
+			builder.parse(inq, outq)
+		except BaseException as e:
+			logging.critical('XMLBuilder.run exception: {} {}'.format(type(e), e))
+		outq.put(None) # poison queue
+	##
+	# Parse all messages in @inq and return an XML object.
+	#
+	def parse(self, inq, outq):
+		assert inq is not None
+		# process messages
+		while True:
+			msg = inq.get()
+			if msg is None: # poison pill
+				break
+			logging.superdebug('XMLBuilder.parse: {}'.format(msg))
+			self.event(msg)
 		# get and return top node
 		for key in self.state.keys():
 			if self.state[key] is not None:
-#				return self.state[key] # XXX lxml cannot be pickled
-				return etree.tostring(self.state[key])
+				outq.put(self.state[key])
+		outq.put(None) # poison queue
 	##
 	# Process a signal.
 	#
@@ -329,7 +352,7 @@ class XMLBuilder:
 		elif supertyp == 'subsection':
 			ident = parentel.attrib['id'] + '/' + enum
 		else:
-			logging.fatal('get_id unknown supertype: {}'.format(supertyp))
+			logging.critical('get_id unknown supertype: {}'.format(supertyp))
 			raise RuntimeError('get_id unknown supertype: {}'.format(supertyp))
 		return ident
 	##
@@ -394,13 +417,28 @@ class OOFileParser:
 		self.state = self.StateEnum.init
 		self.last_line_ended_with_colon = False
 	##
-	# Yield {'type':, 'enum':, 'heading':, 'content':} for all lines in OOFile.
 	#
-	def parse(self, fin):
-		if fin is None:
-			return
-		for signal in fin:
-			yield from self.event(signal)
+	#
+	@staticmethod
+	def run(inq, outq):
+		try:
+			parser = OOFileParser()
+			parser.parse(inq, outq)
+		except BaseException as e:
+			logging.critical('OOFileParser.run exception: {} {}'.format(type(e), e))
+		outq.put(None) # poison queue
+	##
+	# Parse messages from @inq and output resulting messages in @outq.
+	#
+	def parse(self, inq, outq):
+		assert inq is not None and outq is not None
+		while True:
+			inmsg = inq.get()
+			if inmsg is None: # poison pill
+				break
+			for outmsg in self.event(inmsg):
+				outq.put(outmsg)
+		outq.put(None) # poison queue
 	##
 	# Consume an event and return a list of structured elements
 	# in the form of {'type':, 'enum':, 'heading':, 'content':}.
@@ -813,31 +851,42 @@ class OOFileParser:
 #
 class OOFile():
 	##
-	# Open a file and return its UNO XText.
 	#
-	def __init__(self, desktop, filename):
-		self.doc = None
-
-		url = unohelper.systemPathToFileUrl(os.path.abspath(filename))
+	#
+	@staticmethod
+	def run(fn, outq):
+		try:
+			OOFile.parse(fn, outq)
+		except BaseException as e:
+			logging.critical('OOFile.run exception: {} {}'.format(type(e), e))
+		outq.put(None) # poison queue
+	##
+	# Open file using desktop and parse and enqueue messages representing paragraphs.
+	#
+	@staticmethod
+	def parse(fn, outq):
+		assert fn is not None and outq is not None
+		doc = None
+		# get desktop
+		desktop = OOFile.connect_soffice()
+		if not desktop:
+			logging.critical('no desktop')
+			return
+		# open file
+		url = unohelper.systemPathToFileUrl(os.path.abspath(fn))
 		try:
 			doc = desktop.loadComponentFromURL(url ,'_blank', 0, ())
-			self.doc = doc
 		except uno.getClass('com.sun.star.lang.IllegalArgumentException') as e:
-			self.close()
-			raise FileNotFoundError('file not found: {}'.format(filename))
-	##
-	# See __iter().
-	#
-	def __iter__(self):
-		return self.__iter()
-	##
-	# Iterate over paragraphs in an UNO XText object and yield signals.
-	#
-	# See <http://wiki.services.openoffice.org/wiki/Documentation/DevGuide/Text/Iterating_over_Text>.
-	#
-	def __iter(self):
+			logging.critical('file not found: {}'.format(filename))
+			return
+		except uno.getClass('com.sun.star.lang.DisposedException') as e:
+			logging.critical('connect_soffice desktop bridge died: {}'.format(e))
+			return
+		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
+			logging.critical('connect_soffice desktop exception: {}'.format(e))
+			return
 		# get the com.sun.star.text.Text service and get an XEnumeration of com.sun.star.text.Paragraph objects from the XEnumerationAccess
-		for para in OOFile.XEnumeration(self.doc.getText()):
+		for para in OOFile.XEnumeration(doc.getText()):
 			lmargin = None
 			adjust = 'unknown'
 			weightn = -1
@@ -882,21 +931,21 @@ class OOFile():
 			else:
 				logging.warning('OOFile unknown weight: {}'.format(weightn))
 				weight = 'unknown'
-			# return signal
-			signal = {'line': s, 'adjust': adjust, 'lmargin': lmargin, 'weight': weight}
-			yield signal
-	##
-	#
-	#
-	def close(self):
-		logging.debug('OOFile closing: {}'.format(self))
-		if self.doc:
-			try:
-				self.doc.dispose()
-			except uno.getClass('com.sun.star.lang.DisposedException'):
-				pass
-			except uno.getClass('com.sun.star.uno.RuntimeException'):
-				pass
+			# enqueue message
+			message = {'line': s, 'adjust': adjust, 'lmargin': lmargin, 'weight': weight}
+			outq.put(message)
+		# close file
+		logging.debug('OOFile closing: {}'.format(doc))
+		if doc is None:
+			return
+		try:
+			doc.dispose()
+		except uno.getClass('com.sun.star.lang.DisposedException'):
+			logging.debug('OOFile.close uno.DisposedException: {} {}'.format(doc, e))
+		except uno.getClass('com.sun.star.uno.RuntimeException'):
+			logging.debug('OOFile.close uno.RuntimeException: {} {}'.format(doc, e))
+		# poison queue
+		outq.put(None)
 	##
 	# Get an XEnumeration of objects from a given object supporting the
 	# XEnumerationAccess interface.
@@ -934,7 +983,7 @@ class OOFile():
 				context = resolver.resolve(resolvurl)
 			except uno.getClass('com.sun.star.lang.DisposedException') as e:
 				logging.warning('connect_soffice bridge died: {}'.format(e))
-				break
+				return None
 			except uno.getClass('com.sun.star.connection.NoConnectException') as e:
 				logging.warning('failed to connect {} / {} ... retrying in 5 seconds'.format(i+1, tries))
 				time.sleep(5)
@@ -950,6 +999,7 @@ class OOFile():
 	@staticmethod
 	def terminate_soffice(desktop):
 		if desktop is None:
+			logging.debug('terminate_soffice desktop None')
 			return False
 		try:
 			desktop.terminate() # kills soffice
