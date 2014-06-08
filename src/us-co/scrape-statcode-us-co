@@ -94,7 +94,7 @@ def main():
 def do_it(fns, fout, threads):
 	ret = 0
 	# start soffice
-	p = spawn_soffice()
+	p = OOFile.start_soffice()
 	time.sleep(5)
 	# xml body
 	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14", "proposed": "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed"})
@@ -118,7 +118,7 @@ def do_it(fns, fout, threads):
 		tree.write(fout)
 	# cleanup
 	logging.info('do_it cleaning up')
-	terminate_soffice(connect_soffice())
+	OOFile.terminate_soffice(OOFile.connect_soffice())
 	p.wait()
 	return ret
 
@@ -129,7 +129,7 @@ def do_parse(fn):
 	logging.info('do_parse parsing: {}'.format(fn))
 	xml = None
 	# get desktop
-	desktop = connect_soffice()
+	desktop = OOFile.connect_soffice()
 	if not desktop:
 		logging.fatal('do_parse desktop')
 		return None
@@ -811,56 +811,6 @@ class OOFileParser:
 ##
 #
 #
-def spawn_soffice(pipename='officepipe'):
-	cmd = 'soffice --accept="pipe,name='+pipename+';urp;StarOffice.ServiceManager" --norestore --nologo --headless --nolockcheck'
-	cmdl = shlex.split(cmd)
-	p = subprocess.Popen(cmdl, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True, universal_newlines=True)
-	p.stdin.close()
-#	p.stdout.read() # TODO needed?
-	p.stdout.close()
-	return p
-
-##
-# Connect to a running soffice instance and return a XDesktop object.
-#
-def connect_soffice(pipename='officepipe', tries=5):
-	context = None
-	desktop = None
-	local = uno.getComponentContext()
-	resolver = local.ServiceManager.createInstanceWithContext('com.sun.star.bridge.UnoUrlResolver', local)
-	resolvurl = 'uno:pipe,name='+pipename+';urp;StarOffice.ComponentContext'
-	for i in range(tries):
-		try:
-			context = resolver.resolve(resolvurl)
-		except uno.getClass('com.sun.star.lang.DisposedException') as e:
-			logging.warning('connect_soffice bridge died: {}'.format(e))
-			break
-		except uno.getClass('com.sun.star.connection.NoConnectException') as e:
-			logging.warning('failed to connect {} / {} ... retrying in 5 seconds'.format(i+1, tries))
-			time.sleep(5)
-	if context:
-		desktop = context.ServiceManager.createInstanceWithContext('com.sun.star.frame.Desktop', context)
-	else:
-		logging.debug('failed to connect to soffice')
-	return desktop
-
-##
-#
-#
-def terminate_soffice(desktop):
-	if desktop is None:
-		return False
-	try:
-		desktop.terminate() # kills soffice
-	except uno.getClass('com.sun.star.lang.DisposedException'): # XXX needed?
-		return False
-	except uno.getClass('com.sun.star.uno.RuntimeException'):
-		return False
-	return True
-
-##
-#
-#
 class OOFile():
 	##
 	# Open a file and return its UNO XText.
@@ -880,15 +830,6 @@ class OOFile():
 	#
 	def __iter__(self):
 		return self.__iter()
-	##
-	# Get an XEnumeration of objects from a given object supporting the
-	# XEnumerationAccess interface.
-	#
-	@staticmethod
-	def XEnumeration(obj):
-		xenum = obj.createEnumeration()
-		while xenum.hasMoreElements():
-			yield xenum.nextElement()
 	##
 	# Iterate over paragraphs in an UNO XText object and yield signals.
 	#
@@ -921,12 +862,15 @@ class OOFile():
 			ss = []
 			# get an XEnumeration of com.sun.star.text.TextPortion objects
 			for portion in OOFile.XEnumeration(para):
-				if portion.TextPortionType == 'Text':
-					s = portion.getString()
-					# get the last weight
-					if portion.supportsService('com.sun.star.style.CharacterProperties') and hasattr(portion, 'CharWeight'):
-						weightn = portion.CharWeight
-					ss.append(s)
+				# skip non-text portions
+				if portion.TextPortionType != 'Text':
+					continue
+				# get portion string
+				s = portion.getString()
+				# get the last weight
+				if portion.supportsService('com.sun.star.style.CharacterProperties') and hasattr(portion, 'CharWeight'):
+					weightn = portion.CharWeight
+				ss.append(s)
 			# interpret data
 			s = str.join('', ss)
 			if round(weightn) == 100: # com.sun.star.awt.FontWeight
@@ -953,6 +897,67 @@ class OOFile():
 				pass
 			except uno.getClass('com.sun.star.uno.RuntimeException'):
 				pass
+	##
+	# Get an XEnumeration of objects from a given object supporting the
+	# XEnumerationAccess interface.
+	#
+	@staticmethod
+	def XEnumeration(obj):
+		xenum = obj.createEnumeration()
+		while xenum.hasMoreElements():
+			yield xenum.nextElement()
+	##
+	#
+	#
+	@staticmethod
+	def start_soffice(pipename='officepipe'):
+		cmd = 'soffice --accept="pipe,name='+pipename+';urp;StarOffice.ServiceManager" --norestore --nologo --headless --nolockcheck'
+		cmdl = shlex.split(cmd)
+		p = subprocess.Popen(cmdl, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True, universal_newlines=True)
+		p.stdin.close()
+#		p.stdout.read() # TODO needed?
+		p.stdout.close()
+		return p
+
+	##
+	# Connect to a running soffice instance and return a XDesktop object.
+	#
+	@staticmethod
+	def connect_soffice(pipename='officepipe', tries=5):
+		context = None
+		desktop = None
+		local = uno.getComponentContext()
+		resolver = local.ServiceManager.createInstanceWithContext('com.sun.star.bridge.UnoUrlResolver', local)
+		resolvurl = 'uno:pipe,name='+pipename+';urp;StarOffice.ComponentContext'
+		for i in range(tries):
+			try:
+				context = resolver.resolve(resolvurl)
+			except uno.getClass('com.sun.star.lang.DisposedException') as e:
+				logging.warning('connect_soffice bridge died: {}'.format(e))
+				break
+			except uno.getClass('com.sun.star.connection.NoConnectException') as e:
+				logging.warning('failed to connect {} / {} ... retrying in 5 seconds'.format(i+1, tries))
+				time.sleep(5)
+		if context:
+			desktop = context.ServiceManager.createInstanceWithContext('com.sun.star.frame.Desktop', context)
+		else:
+			logging.debug('failed to connect to soffice')
+		return desktop
+
+	##
+	#
+	#
+	@staticmethod
+	def terminate_soffice(desktop):
+		if desktop is None:
+			return False
+		try:
+			desktop.terminate() # kills soffice
+		except uno.getClass('com.sun.star.lang.DisposedException'): # XXX needed?
+			return False
+		except uno.getClass('com.sun.star.uno.RuntimeException'):
+			return False
+		return True
 
 # do it
 if __name__ == "__main__":
