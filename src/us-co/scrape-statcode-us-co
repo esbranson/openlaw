@@ -834,7 +834,10 @@ def connect_soffice(pipename='officepipe', tries=5):
 	for i in range(tries):
 		try:
 			context = resolver.resolve(resolvurl)
-		except BaseException as e:
+		except uno.getClass('com.sun.star.lang.DisposedException') as e:
+			logging.warning('connect_soffice bridge died: {}'.format(e))
+			break
+		except uno.getClass('com.sun.star.connection.NoConnectException') as e:
 			logging.warning('failed to connect {} / {} ... retrying in 5 seconds'.format(i+1, tries))
 			time.sleep(5)
 	if context:
