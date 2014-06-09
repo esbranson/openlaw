@@ -104,14 +104,13 @@ def do_it(fns, fout, threads):
 	meta = etree.SubElement(act, 'meta')
 	body = etree.SubElement(act, 'body')
 	# submit and complete tasks
-	executor = concurrent.futures.ProcessPoolExecutor(max_workers=threads)
+	executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
 	try:
 		for xml in executor.map(do_parse, fns):
 			if xml is None:
 				# breaking cleanly triggers else clause
 				# XXX is this really shutting down executor?
 				raise RuntimeError('do_parse failed: xml is None')
-			xml = etree.fromstring(xml) # XXX lxml cannot be pickled
 			body.append(xml)
 	except BaseException as e:
 		logging.critical('do_it exception: {} {}'.format(type(e), e))
@@ -122,7 +121,8 @@ def do_it(fns, fout, threads):
 	# cleanup
 	logging.info('do_it cleaning up')
 	executor.shutdown()
-	OOFile.terminate_soffice(OOFile.connect_soffice())
+	if ret == 0:
+		OOFile.terminate_soffice(OOFile.connect_soffice())
 	p.wait()
 	return ret
 
@@ -161,9 +161,7 @@ def do_parse(fn):
 	parserthread.join()
 	builderthread.join()
 	# return
-	if xml is None:
-		return None
-	return etree.tostring(xml) # NOTE etree.Element cannot be pickled
+	return xml
 
 ##
 # A state machine that parses a stream of semi-structured document lines
