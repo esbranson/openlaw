@@ -933,11 +933,13 @@ class OOFile():
 			message = {'line': s, 'adjust': adjust, 'lmargin': lmargin, 'weight': weight}
 			outq.put(message)
 		# close file
+		# See <https://wiki.openoffice.org/wiki/Documentation/DevGuide/OfficeDev/Closing_Documents>.
 		logging.debug('OOFile closing: {}'.format(doc))
 		if doc is None:
 			return
 		try:
-			doc.dispose()
+			# XXX we should check for the com.sun.star.util.XCloseable interface first
+			doc.close()
 		except uno.getClass('com.sun.star.lang.DisposedException') as e:
 			logging.debug('OOFile.parse uno.DisposedException: {} {}'.format(doc, e))
 		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
