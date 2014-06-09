@@ -913,11 +913,10 @@ class OOFile():
 				if portion.TextPortionType != 'Text':
 					continue
 				# get portion string
-				s = portion.getString()
+				ss.append(portion.getString())
 				# get the last weight
 				if portion.supportsService('com.sun.star.style.CharacterProperties') and hasattr(portion, 'CharWeight'):
 					weightn = portion.CharWeight
-				ss.append(s)
 			# interpret data
 			s = str.join('', ss)
 			if round(weightn) == 100: # com.sun.star.awt.FontWeight
@@ -941,9 +940,9 @@ class OOFile():
 			# XXX we should check for the com.sun.star.util.XCloseable interface first
 			doc.close()
 		except uno.getClass('com.sun.star.lang.DisposedException') as e:
-			logging.debug('OOFile.parse uno.DisposedException: {} {}'.format(doc, e))
+			logging.warning('OOFile.parse uno.DisposedException: {} {}'.format(doc, e))
 		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
-			logging.debug('OOFile.parse uno.RuntimeException: {} {}'.format(doc, e))
+			logging.warning('OOFile.parse uno.RuntimeException: {} {}'.format(doc, e))
 		# poison queue
 		outq.put(None)
 	##
@@ -982,7 +981,7 @@ class OOFile():
 			try:
 				context = resolver.resolve(resolvurl)
 			except uno.getClass('com.sun.star.lang.DisposedException') as e:
-				logging.warning('OOFile.connect_soffice bridge died: {}'.format(e))
+				logging.critical('OOFile.connect_soffice bridge died: {}'.format(e))
 				break
 			except uno.getClass('com.sun.star.connection.NoConnectException') as e:
 				logging.warning('OOFile.connect_soffice failed to connect {} / {}'.format(i+1, tries))
@@ -997,13 +996,15 @@ class OOFile():
 	@staticmethod
 	def terminate_soffice(desktop):
 		if desktop is None:
-			logging.debug('terminate_soffice desktop None')
+			logging.debug('OOFile.terminate_soffice desktop None')
 			return False
 		try:
 			desktop.terminate() # kills soffice
-		except uno.getClass('com.sun.star.lang.DisposedException'): # XXX needed?
+		except uno.getClass('com.sun.star.lang.DisposedException') as e: # XXX needed?
+			logging.critical('OOFile.terminate_soffice uno.DisposedException: {} {}'.format(desktop, e))
 			return False
-		except uno.getClass('com.sun.star.uno.RuntimeException'):
+		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
+			logging.critical('OOFile.terminate_soffice uno.RuntimeException: {} {}'.format(desktop, e))
 			return False
 		return True
 
