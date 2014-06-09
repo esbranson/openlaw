@@ -938,7 +938,7 @@ class OOFile():
 			return
 		try:
 			# XXX we should check for the com.sun.star.util.XCloseable interface first
-			doc.close()
+			doc.close(True)
 		except uno.getClass('com.sun.star.lang.DisposedException') as e:
 			logging.warning('OOFile.parse uno.DisposedException: {} {}'.format(doc, e))
 		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
