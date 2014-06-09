@@ -938,9 +938,9 @@ class OOFile():
 			return
 		try:
 			doc.dispose()
-		except uno.getClass('com.sun.star.lang.DisposedException'):
+		except uno.getClass('com.sun.star.lang.DisposedException') as e:
 			logging.debug('OOFile.parse uno.DisposedException: {} {}'.format(doc, e))
-		except uno.getClass('com.sun.star.uno.RuntimeException'):
+		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
 			logging.debug('OOFile.parse uno.RuntimeException: {} {}'.format(doc, e))
 		# poison queue
 		outq.put(None)
