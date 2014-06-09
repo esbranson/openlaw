@@ -868,20 +868,20 @@ class OOFile():
 		# get desktop
 		desktop = OOFile.connect_soffice()
 		if not desktop:
-			logging.critical('no desktop')
+			logging.critical('OOFile.parse no desktop')
 			return
 		# open file
 		url = unohelper.systemPathToFileUrl(os.path.abspath(fn))
 		try:
 			doc = desktop.loadComponentFromURL(url ,'_blank', 0, ())
 		except uno.getClass('com.sun.star.lang.IllegalArgumentException') as e:
-			logging.critical('file not found: {}'.format(filename))
+			logging.critical('OOFile.parse file not found: {}'.format(filename))
 			return
 		except uno.getClass('com.sun.star.lang.DisposedException') as e:
-			logging.critical('connect_soffice desktop bridge died: {}'.format(e))
+			logging.critical('OOFile.parse desktop bridge died: {}'.format(e))
 			return
 		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
-			logging.critical('connect_soffice desktop exception: {}'.format(e))
+			logging.critical('OOFile.parse desktop exception: {}'.format(e))
 			return
 		# get the com.sun.star.text.Text service and get an XEnumeration of com.sun.star.text.Paragraph objects from the XEnumerationAccess
 		for para in OOFile.XEnumeration(doc.getText()):
@@ -904,7 +904,7 @@ class OOFile():
 				elif adjustn == 2:
 					adjust = 'block'
 				else:
-					logging.warning('OOFile unknown adjust: {}'.format(adjustn))
+					logging.warning('OOFile.parse unknown adjust: {}'.format(adjustn))
 					adjust = 'unknown'
 			ss = []
 			# get an XEnumeration of com.sun.star.text.TextPortion objects
@@ -927,7 +927,7 @@ class OOFile():
 			elif weightn == -1:
 				weight = 'unknown'
 			else:
-				logging.warning('OOFile unknown weight: {}'.format(weightn))
+				logging.warning('OOFile.parse unknown weight: {}'.format(weightn))
 				weight = 'unknown'
 			# enqueue message
 			message = {'line': s, 'adjust': adjust, 'lmargin': lmargin, 'weight': weight}
@@ -939,9 +939,9 @@ class OOFile():
 		try:
 			doc.dispose()
 		except uno.getClass('com.sun.star.lang.DisposedException'):
-			logging.debug('OOFile.close uno.DisposedException: {} {}'.format(doc, e))
+			logging.debug('OOFile.parse uno.DisposedException: {} {}'.format(doc, e))
 		except uno.getClass('com.sun.star.uno.RuntimeException'):
-			logging.debug('OOFile.close uno.RuntimeException: {} {}'.format(doc, e))
+			logging.debug('OOFile.parse uno.RuntimeException: {} {}'.format(doc, e))
 		# poison queue
 		outq.put(None)
 	##
@@ -980,15 +980,13 @@ class OOFile():
 			try:
 				context = resolver.resolve(resolvurl)
 			except uno.getClass('com.sun.star.lang.DisposedException') as e:
-				logging.warning('connect_soffice bridge died: {}'.format(e))
-				return None
+				logging.warning('OOFile.connect_soffice bridge died: {}'.format(e))
+				break
 			except uno.getClass('com.sun.star.connection.NoConnectException') as e:
-				logging.warning('failed to connect {} / {} ... retrying in 5 seconds'.format(i+1, tries))
+				logging.warning('OOFile.connect_soffice failed to connect {} / {}'.format(i+1, tries))
 				time.sleep(5)
 		if context:
 			desktop = context.ServiceManager.createInstanceWithContext('com.sun.star.frame.Desktop', context)
-		else:
-			logging.debug('failed to connect to soffice')
 		return desktop
 
 	##
