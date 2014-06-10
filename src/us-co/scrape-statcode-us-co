@@ -150,9 +150,9 @@ def do_parse(pipename, fn):
 	logging.info('do_parse parsing: {}'.format(fn))
 	xml = None
 	try:
-		paraq = queue.Queue(10)
-		xmlq = queue.Queue(5)
-		outq = queue.Queue(0) # we only use 1 or 2
+		paraq = queue.Queue(100)
+		xmlq = queue.Queue(50)
+		outq = queue.Queue()
 		# open files, build threads
 		# TODO different types of files?
 		mime = mimetypes.guess_type(fn)
