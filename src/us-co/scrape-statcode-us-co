@@ -888,6 +888,7 @@ class OOFile():
 		desktop = OOFile.connect_soffice(pipename)
 		if not desktop:
 			logging.critical('OOFile.parse no desktop')
+			outq.put(None)
 			return
 		# open file
 		url = unohelper.systemPathToFileUrl(os.path.abspath(fn))
@@ -895,12 +896,19 @@ class OOFile():
 			doc = desktop.loadComponentFromURL(url ,'_blank', 0, (uno.createUnoStruct('com.sun.star.beans.PropertyValue', 'ReadOnly', 0, True, 0),))
 		except uno.getClass('com.sun.star.lang.IllegalArgumentException') as e:
 			logging.critical('OOFile.parse file not found: {}'.format(filename))
+			outq.put(None)
 			return
 		except uno.getClass('com.sun.star.lang.DisposedException') as e:
 			logging.critical('OOFile.parse desktop bridge died: {}'.format(e))
+			outq.put(None)
 			return
 		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
 			logging.critical('OOFile.parse desktop exception: {}'.format(e))
+			outq.put(None)
+			return
+		if doc is None:
+			logging.critical('OOFile.parse doc is None')
+			outq.put(None)
 			return
 		# get the com.sun.star.text.Text service and get an XEnumeration of com.sun.star.text.Paragraph objects from the XEnumerationAccess
 		for para in OOFile.XEnumeration(doc.getText()):
@@ -953,11 +961,10 @@ class OOFile():
 		# close file
 		# See <https://wiki.openoffice.org/wiki/Documentation/DevGuide/OfficeDev/Closing_Documents>.
 		logging.debug('OOFile closing: {}'.format(doc))
-		if doc is None:
-			return
 		try:
-			# XXX we should check for the com.sun.star.util.XCloseable interface first
-			doc.close(True)
+			if doc is not None:
+				# XXX we should check for the com.sun.star.util.XCloseable interface first
+				doc.close(True)
 		except uno.getClass('com.sun.star.lang.DisposedException') as e:
 			logging.critical('OOFile.parse uno.DisposedException: {} {}'.format(doc, e))
 		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
@@ -998,14 +1005,16 @@ class OOFile():
 		for i in range(tries):
 			try:
 				context = resolver.resolve(resolvurl)
+				if context is not None:
+					desktop = context.ServiceManager.createInstanceWithContext('com.sun.star.frame.Desktop', context)
 			except uno.getClass('com.sun.star.lang.DisposedException') as e:
 				logging.critical('OOFile.connect_soffice bridge died: {}'.format(e))
 				break
 			except uno.getClass('com.sun.star.connection.NoConnectException') as e:
-				logging.warning('OOFile.connect_soffice failed to connect {} / {}'.format(i+1, tries))
-				time.sleep(5)
-		if context:
-			desktop = context.ServiceManager.createInstanceWithContext('com.sun.star.frame.Desktop', context)
+				logging.debug('OOFile.connect_soffice failed to connect {} / {}'.format(i+1, tries))
+				time.sleep(sleep)
+		if context is None or desktop is None:
+			logging.warning('OOFile.connect_soffice failed to connect')
 		return desktop
 
 	##
