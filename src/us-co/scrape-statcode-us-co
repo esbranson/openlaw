@@ -873,7 +873,7 @@ class OOFile():
 		# open file
 		url = unohelper.systemPathToFileUrl(os.path.abspath(fn))
 		try:
-			doc = desktop.loadComponentFromURL(url ,'_blank', 0, ())
+			doc = desktop.loadComponentFromURL(url ,'_blank', 0, (uno.createUnoStruct('com.sun.star.beans.PropertyValue', 'ReadOnly', 0, True, 0),))
 		except uno.getClass('com.sun.star.lang.IllegalArgumentException') as e:
 			logging.critical('OOFile.parse file not found: {}'.format(filename))
 			return
