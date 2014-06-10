@@ -12,7 +12,8 @@ Arguments:
 
 	file		input RTF file from the bulk download site
 	-o file		output file ('-' for stdout) (default: stdout)
-	-n threads	number of parallel threads (default: 2)
+	-n num		number of parallel threads (default: 2)
+	-p num		number of Open Office processes (default: 1)
 	-d		enable debuging output (default: warnings only)
 """
 
@@ -32,6 +33,7 @@ import collections
 import concurrent.futures
 import threading
 import queue
+import tempfile
 
 ##
 # Entry function: Parse paramters, call main function.
@@ -40,12 +42,13 @@ def main():
 	fout = sys.stdout.buffer
 	debug = logging.WARNING
 	threads = 2
+	processes = 1
 	logging.SUPERDEBUG = logging.DEBUG-2 # XXX monkey fix
 	logging.UBERDEBUG = logging.DEBUG-4
 
 	# parse arguments
 	try:
-		opts, args = getopt.getopt(sys.argv[1:], 'o:dn:h')
+		opts, args = getopt.getopt(sys.argv[1:], 'o:n:p:dh')
 	except getopt.GetoptError:
 		logging.fatal('getopt error {}'.format(usage))
 		return 1
@@ -64,6 +67,8 @@ def main():
 			fout = arg
 		elif opt in {'-n'}:
 			threads = int(arg)
+		elif opt in {'-p'}:
+			processes = int(arg)
 		elif opt in {'-h', '--help'}:
 			print(opt, usage)
 			return 0
@@ -86,27 +91,35 @@ def main():
 	logging.uberdebug = lambda msg, *args, **kwargs: logging.log(logging.UBERDEBUG, msg, *args, **kwargs)
 
 	# do it
-	ret = do_it(fns, fout, threads)
+	ret = do_it(fns, fout, processes, threads)
 
 	return ret
 
 ##
 # Execute do_parse() against given filenames in parallel.
 #
-def do_it(fns, fout, threads):
+def do_it(fns, fout, nprocs, nthreads):
 	ret = 0
-	# start soffice
-	p = OOFile.start_soffice()
+	# start soffice processes
+	procs = []
+	for i in range(nprocs):
+		#pipename, tmpd, p = OOFile.start_soffice()
+		procs.append(OOFile.start_soffice())
 	time.sleep(5)
 	# xml body
 	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14", "proposed": "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed"})
 	act = etree.SubElement(akn, 'act', attrib={'name': 'title'})
 	meta = etree.SubElement(act, 'meta')
 	body = etree.SubElement(act, 'body')
-	# submit and complete tasks
-	executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
+	# submit tasks
+	executor = concurrent.futures.ThreadPoolExecutor(max_workers=nthreads)
+	futures = []
+	for i,fn in enumerate(fns):
+		pipename = procs[i % nprocs][0]
+		futures.append(executor.submit(do_parse, pipename, fn))
+	# complete tasks
 	try:
-		for xml in executor.map(do_parse, fns):
+		for xml in (future.result() for future in futures):
 			if xml is None:
 				# breaking cleanly triggers else clause
 				# XXX is this really shutting down executor?
@@ -120,16 +133,20 @@ def do_it(fns, fout, threads):
 		tree.write(fout)
 	# cleanup
 	logging.info('do_it cleaning up')
+	for future in reversed(futures):
+		future.cancel()
 	executor.shutdown()
-	if ret == 0:
-		OOFile.terminate_soffice(OOFile.connect_soffice())
-	p.wait()
+	for pipename, tmpd, p in procs:
+		if p.poll() is None:
+			OOFile.terminate_soffice(OOFile.connect_soffice(pipename))
+		p.wait()
+		tmpd.cleanup()
 	return ret
 
 ##
 # Parse a file and return partial Akoma Ntoso XML.
 #
-def do_parse(fn):
+def do_parse(pipename, fn):
 	logging.info('do_parse parsing: {}'.format(fn))
 	xml = None
 	try:
@@ -137,9 +154,10 @@ def do_parse(fn):
 		xmlq = queue.Queue(5)
 		outq = queue.Queue(0) # we only use 1 or 2
 		# open files, build threads
+		# TODO different types of files?
 		mime = mimetypes.guess_type(fn)
 		if mime[0] == 'application/rtf':
-			filethread = threading.Thread(target=OOFile.run, args=(fn, paraq))
+			filethread = threading.Thread(target=OOFile.run, args=(pipename, fn, paraq))
 		else:
 			logging.critical('do_parse unknown filetype: {} {}'.format(fn, mime))
 			return None
@@ -157,6 +175,7 @@ def do_parse(fn):
 		logging.critical('do_parse exception: {} {}'.format(type(e), e))
 	logging.info('do_parse done: {}'.format(fn))
 	# wait for completion of threads
+	# TODO is this necessary?
 	filethread.join()
 	parserthread.join()
 	builderthread.join()
@@ -852,9 +871,9 @@ class OOFile():
 	#
 	#
 	@staticmethod
-	def run(fn, outq):
+	def run(pipename, fn, outq):
 		try:
-			OOFile.parse(fn, outq)
+			OOFile.parse(pipename, fn, outq)
 		except BaseException as e:
 			logging.critical('OOFile.run exception: {} {}'.format(type(e), e))
 		outq.put(None) # poison queue
@@ -862,11 +881,11 @@ class OOFile():
 	# Open file using desktop and parse and enqueue messages representing paragraphs.
 	#
 	@staticmethod
-	def parse(fn, outq):
+	def parse(pipename, fn, outq):
 		assert fn is not None and outq is not None
 		doc = None
 		# get desktop
-		desktop = OOFile.connect_soffice()
+		desktop = OOFile.connect_soffice(pipename)
 		if not desktop:
 			logging.critical('OOFile.parse no desktop')
 			return
@@ -955,23 +974,22 @@ class OOFile():
 		while xenum.hasMoreElements():
 			yield xenum.nextElement()
 	##
-	#
+	# TODO make POSIX/Windows agnostic, e.g., USERPROFILE instead of HOME.
 	#
 	@staticmethod
-	def start_soffice(pipename='officepipe'):
+	def start_soffice(pipename=None):
+		if pipename is None:
+			pipename = 'officepipe-'+next(tempfile._RandomNameSequence())
+		tmpd = tempfile.TemporaryDirectory()
 		cmd = 'soffice --accept="pipe,name='+pipename+';urp;StarOffice.ServiceManager" --norestore --nologo --headless --nolockcheck'
-		cmdl = shlex.split(cmd)
-		p = subprocess.Popen(cmdl, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True, universal_newlines=True)
-		p.stdin.close()
-#		p.stdout.read() # TODO needed?
-		p.stdout.close()
-		return p
+		p = subprocess.Popen(shlex.split(cmd), env={"HOME": tmpd.name}, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+		return pipename, tmpd, p
 
 	##
 	# Connect to a running soffice instance and return a XDesktop object.
 	#
 	@staticmethod
-	def connect_soffice(pipename='officepipe', tries=5):
+	def connect_soffice(pipename, tries=5, sleep=5):
 		context = None
 		desktop = None
 		local = uno.getComponentContext()
