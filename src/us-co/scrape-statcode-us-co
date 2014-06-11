@@ -82,7 +82,7 @@ def main():
 	fns = args
 
 	# configure
-	logging.basicConfig(format='{levelname:8s}: {message}', style='{', level=debug)
+	logging.basicConfig(format='{levelname} {process}/{threadName} {message}', style='{', level=debug)
 	logging.addLevelName(logging.SUPERDEBUG, 'SUPERDEBUG')
 	logging.addLevelName(logging.UBERDEBUG, 'UBERDEBUG')
 #	logging.Logger.superdebug = lambda inst, msg, *args, **kwargs: inst.log(logging.SUPERDEBUG, msg, *args, **kwargs)
