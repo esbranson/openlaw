@@ -234,11 +234,9 @@ class XMLBuilder:
 	##
 	# Process a signal.
 	#
-	# We get 4 signal types: 'heirarchy', 'section', 'subsection', 'subheader'.
-	#
 	def event(self, signal):
-		supertyp = signal['type']
-		if supertyp in {'heirarchy', 'section', 'subsection'}:
+		typ = signal['type']
+		if typ in {'heirarchy'}:
 			self.event_heirarchy(signal)
 		else:
 			raise RuntimeError('XMLBuilder: unknown event: {}'.format(signal))
@@ -247,19 +245,15 @@ class XMLBuilder:
 	# sections and below have content and have different ID algorithms.
 	#
 	def event_heirarchy(self, signal):
-		supertyp, enum, head, text, status = signal['type'], signal['enum'], signal['heading'], signal['content'], signal['status']
-		# get the type
-		if supertyp == 'heirarchy':
-			typ = signal['subtype']
-		elif supertyp == 'subsection':
-			typ = self.heirarchy_type(enum)
-		else:
-			typ = supertyp
+		typ, enum, head, text, status = signal['subtype'], signal['enum'], signal['heading'], signal['content'], signal['status']
+		# determine subtype
+		if typ is None:
+			typ = self.parse_heirarchy_type(enum)
 		# create element
 		el = etree.Element(typ)
 		# info
 		el.attrib['name'] = self.get_name(typ, enum)
-		el.attrib['id'] = self.get_id(supertyp, typ, enum)
+		el.attrib['id'] = self.get_id(typ, enum)
 		if status:
 			el.attrib['status'] = status
 		if enum:
@@ -295,7 +289,7 @@ class XMLBuilder:
 	# |  A   | sub-subparagraph |
 	#  -------------------------
 	#
-	def heirarchy_type(self, s):
+	def parse_heirarchy_type(self, s):
 		ret = 'subsection'
 		if s.isdecimal():
 			ret = 'subsection'
@@ -325,23 +319,40 @@ class XMLBuilder:
 	##
 	# XXX requires non-None parent to have id attribute?
 	#
-	def get_id(self, supertyp, typ, enum):
-		assert supertyp is not None and typ is not None and enum is not None
+	def get_id(self, typ, enum):
+		assert typ is not None and enum is not None
 		parentel = self.get_state_parent(typ)
 		if parentel is None:
 			# XXX only top-most element's parent will be None?
 			ident = '/' + typ + '-' + enum
-		elif supertyp == 'section':
+		elif typ in {'section'}:
+			# XXX if this is None something has gone wrong
 			superparentel = self.get_state_superparent()
 			ident = superparentel.attrib['id'] + '/' + typ + '-' + enum
-		elif supertyp == 'heirarchy':
+		elif XMLBuilder.test_above_section(typ):
 			ident = parentel.attrib['id'] + '/' + typ + '-' + enum
-		elif supertyp == 'subsection':
+		elif XMLBuilder.test_below_section(typ):
 			ident = parentel.attrib['id'] + '/' + enum
 		else:
-			logging.critical('get_id unknown supertype: {}'.format(supertyp))
-			raise RuntimeError('get_id unknown supertype: {}'.format(supertyp))
+			logging.critical('get_id unknown type: {}'.format(typ))
+			raise RuntimeError('get_id unknown type: {}'.format(typ))
 		return ident
+	##
+	# Test if type is below section type.
+	#
+	# TODO should probably make more reboust to changes in heirarchy tree
+	#
+	@staticmethod
+	def test_below_section(typ):
+		return typ in {'subsection', 'paragraph', 'subparagraph', 'subsubparagraph'}
+	##
+	# Test if type is below section type.
+	#
+	# TODO should probably make more reboust to changes in heirarchy tree
+	#
+	@staticmethod
+	def test_above_section(typ):
+		return typ in {'title', 'article', 'part', 'subpart'}
 	##
 	# Get the lowest non-None element above type, or None if its the highest.
 	#
@@ -630,21 +641,21 @@ class OOFileParser:
 		logging.uberdebug('section: {}'.format(signal))
 		sec = OOFileParser.tokenize_section(signal['line']) # return enum, head, status, text, subsecl
 		logging.uberdebug('section sec: {}'.format(sec))
-		ret = [{'type': 'section', 'name': None, 'enum': sec[0], 'heading': sec[1], 'content': sec[3], 'status': sec[2]}]
-		subsec = sec[4] # return enum, status, text, subsecl
-		while subsec is not None:
+		ret = [{'type': 'heirarchy', 'subtype': 'section', 'name': None, 'enum': sec[0], 'heading': sec[1], 'content': sec[3], 'status': sec[2]}]
+		subsec = sec[4]
+		while subsec is not None: # return enum, status, text, subsecl
 			logging.uberdebug('section subsec: {}'.format(subsec))
-			ret.append({'type': 'subsection', 'name': None, 'enum': subsec[0], 'heading': None, 'content': subsec[2], 'status': subsec[1]})
+			ret.append({'type': 'heirarchy', 'subtype': None, 'name': None, 'enum': subsec[0], 'heading': None, 'content': subsec[2], 'status': subsec[1]})
 			subsec = subsec[3]
 		self.state = self.StateEnum.section
 		return ret
 	def transition_subsection(self, signal):
 		logging.uberdebug('subsection: {}'.format(signal))
-		subsec = OOFileParser.tokenize_subsection(signal['line']) # return enum, status, text, subsecl
+		subsec = OOFileParser.tokenize_subsection(signal['line'])
 		ret = []
-		while subsec is not None:
+		while subsec is not None: # return enum, status, text, subsecl
 			logging.uberdebug('subsection subsec: {}'.format(subsec))
-			ret.append({'type': 'subsection', 'name': None, 'enum': subsec[0], 'heading': None, 'content': subsec[2], 'status': subsec[1]})
+			ret.append({'type': 'heirarchy', 'subtype': None, 'name': None, 'enum': subsec[0], 'heading': None, 'content': subsec[2], 'status': subsec[1]})
 			subsec = subsec[3]
 		self.state = self.StateEnum.section
 		return ret
