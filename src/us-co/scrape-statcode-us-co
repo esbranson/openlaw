@@ -121,6 +121,7 @@ def do_it(fns, fout, nprocs, nthreads):
 	# complete tasks
 	try:
 		for xml in (future.result() for future in futures):
+			# TODO we should have a faster way to detect errors
 			if xml is None:
 				# breaking cleanly triggers else clause
 				# XXX is this really shutting down executor?
@@ -169,6 +170,8 @@ def do_parse(pipename, fn):
 		parserthread.start()
 		filethread.start()
 		xml = outq.get()
+		if xml is False: # TODO implement better queue poisoning
+			xml = None
 	except OSError as e:
 		logging.critical('do_parse opening files: {}'.format(e))
 		return None
@@ -223,14 +226,20 @@ class XMLBuilder:
 		while True:
 			msg = inq.get()
 			if msg is None: # poison pill
+				outq.put(self.get_state_top())
+				break
+			elif msg is False:
+				outq.put(False) # poison queue
 				break
 			logging.superdebug('XMLBuilder.parse: {}'.format(msg))
 			self.event(msg)
-		# get and return top node
+	##
+	# Get and return the top-most element.
+	#
+	def get_state_top(self):
 		for key in self.state.keys():
 			if self.state[key] is not None:
-				outq.put(self.state[key])
-		outq.put(None) # poison queue
+				return self.state[key]
 	##
 	# Process a signal.
 	#
@@ -326,8 +335,10 @@ class XMLBuilder:
 			# XXX only top-most element's parent will be None?
 			ident = '/' + typ + '-' + enum
 		elif typ in {'section'}:
-			# XXX if this is None something has gone wrong
-			superparentel = self.get_state_superparent()
+			superparentel = self.get_state_top()
+			if superparentel is None:
+				logging.critical('get_id superparentel is None')
+				raise RuntimeError('get_id superparentel is None')
 			ident = superparentel.attrib['id'] + '/' + typ + '-' + enum
 		elif XMLBuilder.test_above_section(typ):
 			ident = parentel.attrib['id'] + '/' + typ + '-' + enum
@@ -366,11 +377,6 @@ class XMLBuilder:
 				return self.state[key]
 		return None
 	##
-	# Get the top-most element.
-	#
-	def get_state_superparent(self):
-		return self.state[list(self.state.keys())[0]]
-	##
 	# Update (and normalize) state.
 	#
 	def set_state(self, el, typ):
@@ -383,7 +389,7 @@ class XMLBuilder:
 			self.state[key] = None
 
 ##
-# A state machine program that parses a stream of semi-structured lines into
+# A state machine program that parses a stream of unstructured lines into
 # a stream of structured elements.
 #
 # Its essentially a Mealy machine, whose output is a list of
@@ -433,11 +439,11 @@ class OOFileParser:
 		assert inq is not None and outq is not None
 		while True:
 			inmsg = inq.get()
-			if inmsg is None: # poison pill
+			if inmsg is None or inmsg is False: # poison pill
+				outq.put(inmsg) # poison queue
 				break
 			for outmsg in self.event(inmsg):
 				outq.put(outmsg)
-		outq.put(None) # poison queue
 	##
 	# Consume an event and return a list of structured elements
 	# in the form of {'type':, 'enum':, 'heading':, 'content':}.
@@ -889,7 +895,7 @@ class OOFile():
 			OOFile.parse(pipename, fn, outq)
 		except BaseException as e:
 			logging.critical('OOFile.run exception: {} {}'.format(type(e), e))
-		outq.put(None) # poison queue
+			outq.put(False) # poison queue
 	##
 	# Open file using desktop and parse and enqueue messages representing paragraphs.
 	#
@@ -901,7 +907,7 @@ class OOFile():
 		desktop = OOFile.connect_soffice(pipename)
 		if not desktop:
 			logging.critical('OOFile.parse no desktop')
-			outq.put(None)
+			outq.put(False)
 			return
 		# open file
 		url = unohelper.systemPathToFileUrl(os.path.abspath(fn))
@@ -909,19 +915,19 @@ class OOFile():
 			doc = desktop.loadComponentFromURL(url ,'_blank', 0, (uno.createUnoStruct('com.sun.star.beans.PropertyValue', 'ReadOnly', 0, True, 0),))
 		except uno.getClass('com.sun.star.lang.IllegalArgumentException') as e:
 			logging.critical('OOFile.parse file not found: {}'.format(filename))
-			outq.put(None)
+			outq.put(False)
 			return
 		except uno.getClass('com.sun.star.lang.DisposedException') as e:
 			logging.critical('OOFile.parse desktop bridge died: {}'.format(e))
-			outq.put(None)
+			outq.put(False)
 			return
 		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
 			logging.critical('OOFile.parse desktop exception: {}'.format(e))
-			outq.put(None)
+			outq.put(False)
 			return
 		if doc is None:
 			logging.critical('OOFile.parse doc is None')
-			outq.put(None)
+			outq.put(False)
 			return
 		# get the com.sun.star.text.Text service and get an XEnumeration of com.sun.star.text.Paragraph objects from the XEnumerationAccess
 		for para in OOFile.XEnumeration(doc.getText()):
