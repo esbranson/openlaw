@@ -212,8 +212,8 @@ class XMLBuilder:
 			builder = XMLBuilder()
 			builder.parse(inq, outq)
 		except BaseException as e:
-			logging.critical('XMLBuilder.run exception: {} {}'.format(type(e), e))
-		outq.put(None) # poison queue
+			logging.critical('XMLBuilder.run exception: {} {}'.format(type(e), e), exc_info=True)
+			outq.put(False) # poison queue
 	##
 	# Parse all messages in @inq and return an XML object.
 	#
@@ -424,8 +424,8 @@ class OOFileParser:
 			parser = OOFileParser()
 			parser.parse(inq, outq)
 		except BaseException as e:
-			logging.critical('OOFileParser.run exception: {} {}'.format(type(e), e))
-		outq.put(None) # poison queue
+			logging.critical('OOFileParser.run exception: {} {}'.format(type(e), e), exc_info=True)
+			outq.put(False) # poison queue
 	##
 	# Parse messages from @inq and output resulting messages in @outq.
 	#
