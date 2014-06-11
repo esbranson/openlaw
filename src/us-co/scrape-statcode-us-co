@@ -913,8 +913,9 @@ class OOFile():
 		# get the com.sun.star.text.Text service and get an XEnumeration of com.sun.star.text.Paragraph objects from the XEnumerationAccess
 		for para in OOFile.XEnumeration(doc.getText()):
 			lmargin = None
-			adjust = 'unknown'
+			adjust = None
 			weightn = -1
+			style = None
 			# skip non-paragraphs
 			if not para.supportsService('com.sun.star.text.Paragraph'):
 				continue
@@ -924,15 +925,6 @@ class OOFile():
 			# get adjustment
 			if para.supportsService('com.sun.star.style.ParagraphProperties') and hasattr(para, 'ParaAdjust'):
 				adjustn = para.ParaAdjust
-				if adjustn == 3: # com.sun.star.style.ParagraphAdjust
-					adjust = 'center'
-				elif adjustn == 0:
-					adjust = 'left'
-				elif adjustn == 2:
-					adjust = 'block'
-				else:
-					logging.warning('OOFile.parse unknown adjust: {}'.format(adjustn))
-					adjust = 'unknown'
 			ss = []
 			# get an XEnumeration of com.sun.star.text.TextPortion objects
 			for portion in OOFile.XEnumeration(para):
@@ -941,22 +933,34 @@ class OOFile():
 					continue
 				# get portion string
 				ss.append(portion.getString())
-				# get the last weight
+				# get the last portion's weight
 				if portion.supportsService('com.sun.star.style.CharacterProperties') and hasattr(portion, 'CharWeight'):
 					weightn = portion.CharWeight
+				# get the last portion's style
+				if portion.supportsService('com.sun.star.style.ParagraphProperties') and hasattr(portion, 'ParaStyleName'):
+					style = portion.ParaStyleName # XXX need to strip?
 			# interpret data
 			s = str.join('', ss)
+			if adjustn == 3: # com.sun.star.style.ParagraphAdjust
+				adjust = 'center'
+			elif adjustn == 0:
+				adjust = 'left'
+			elif adjustn == 2:
+				adjust = 'block'
+			else:
+				logging.warning('OOFile.parse unknown adjust: {}'.format(adjustn))
+				adjust = None
 			if round(weightn) == 100: # com.sun.star.awt.FontWeight
 				weight = 'normal'
 			elif round(weightn) == 150:
 				weight = 'bold'
 			elif weightn == -1:
-				weight = 'unknown'
+				weight = None
 			else:
 				logging.warning('OOFile.parse unknown weight: {}'.format(weightn))
-				weight = 'unknown'
+				weight = None
 			# enqueue message
-			message = {'line': s, 'adjust': adjust, 'lmargin': lmargin, 'weight': weight}
+			message = {'line': s, 'adjust': adjust, 'lmargin': lmargin, 'weight': weight, 'style': style}
 			outq.put(message)
 		# close file
 		# See <https://wiki.openoffice.org/wiki/Documentation/DevGuide/OfficeDev/Closing_Documents>.
