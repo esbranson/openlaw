@@ -133,16 +133,18 @@ def do_it(fns, fout, nprocs, nthreads):
 	else:
 		tree = etree.ElementTree(akn)
 		tree.write(fout)
-	# cleanup
-	logging.info('do_it cleaning up')
-	for future in reversed(futures):
-		future.cancel()
-	executor.shutdown()
-	for pipename, tmpd, p in procs:
-		if p.poll() is None:
-			OOFile.terminate_soffice(OOFile.connect_soffice(pipename))
-		p.wait()
-		tmpd.cleanup()
+	finally:
+		# cleanup
+		logging.info('do_it cleaning up')
+		for future,errq in reversed(futures):
+			future.cancel()
+			errq.put(False)
+		executor.shutdown()
+		for pipename, tmpd, p in procs:
+			if p.poll() is None:
+				OOFile.terminate_soffice(OOFile.connect_soffice(pipename))
+			p.wait()
+			tmpd.cleanup()
 	return ret
 
 ##
