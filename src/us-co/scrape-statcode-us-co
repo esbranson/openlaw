@@ -117,10 +117,13 @@ def do_it(fns, fout, nprocs, nthreads):
 	futures = []
 	for i,fn in enumerate(fns):
 		pipename = procs[i % nprocs][0]
-		futures.append(executor.submit(do_parse, pipename, fn))
+		# errq signals producer to fail
+		errq = queue.Queue() # XXX beware IPC v. interthread
+		future = executor.submit(do_parse, pipename, fn, errq)
+		futures.append((future, errq))
 	# complete tasks
 	try:
-		for xml in (future.result() for future in futures):
+		for xml in (future.result() for future,errq in futures):
 			# TODO we should have a faster way to detect errors
 			if xml is None:
 				# breaking cleanly triggers else clause
@@ -150,23 +153,23 @@ def do_it(fns, fout, nprocs, nthreads):
 ##
 # Parse a file and return partial Akoma Ntoso XML.
 #
-def do_parse(pipename, fn):
+def do_parse(pipename, fn, errq):
 	logging.info('do_parse parsing: {}'.format(fn))
 	xml = None
 	try:
 		paraq = queue.Queue(100)
 		xmlq = queue.Queue(50)
-		outq = queue.Queue()
+		outq = queue.Queue() # XXX should we bound these?
 		# open files, build threads
 		# TODO different types of files?
 		mime = mimetypes.guess_type(fn)
 		if mime[0] == 'application/rtf':
-			filethread = threading.Thread(target=OOFile.run, args=(pipename, fn, paraq))
+			filethread = threading.Thread(target=OOFile.run, args=(pipename, fn, errq, paraq))
 		else:
 			logging.critical('do_parse unknown filetype: {} {}'.format(fn, mime))
 			return None
-		parserthread = threading.Thread(target=OOFileParser.run, args=(paraq, xmlq))
-		builderthread = threading.Thread(target=XMLBuilder.run, args=(xmlq, outq))
+		parserthread = threading.Thread(target=OOFileParser.run, args=(paraq, xmlq, errq))
+		builderthread = threading.Thread(target=XMLBuilder.run, args=(xmlq, outq, errq))
 		# parse
 		builderthread.start()
 		parserthread.start()
@@ -212,17 +215,18 @@ class XMLBuilder:
 	#
 	#
 	@staticmethod
-	def run(inq, outq):
+	def run(inq, outq, errq):
 		try:
 			builder = XMLBuilder()
-			builder.parse(inq, outq)
+			builder.parse(inq, outq, errq)
 		except BaseException as e:
 			logging.critical('XMLBuilder.run exception: {} {}'.format(type(e), e), exc_info=True)
 			outq.put(False) # poison queue
+			errq.put(False)
 	##
 	# Parse all messages in @inq and return an XML object.
 	#
-	def parse(self, inq, outq):
+	def parse(self, inq, outq, errq):
 		assert inq is not None
 		# process messages
 		while True:
@@ -232,6 +236,7 @@ class XMLBuilder:
 				break
 			elif msg is False:
 				outq.put(False) # poison queue
+				errq.put(False)
 				break
 			logging.superdebug('XMLBuilder.parse: {}'.format(msg))
 			self.event(msg)
@@ -427,22 +432,27 @@ class OOFileParser:
 	#
 	#
 	@staticmethod
-	def run(inq, outq):
+	def run(inq, outq, errq):
 		try:
 			parser = OOFileParser()
-			parser.parse(inq, outq)
+			parser.parse(inq, outq, errq)
 		except BaseException as e:
 			logging.critical('OOFileParser.run exception: {} {}'.format(type(e), e), exc_info=True)
 			outq.put(False) # poison queue
+			errq.put(False)
 	##
 	# Parse messages from @inq and output resulting messages in @outq.
 	#
-	def parse(self, inq, outq):
+	def parse(self, inq, outq, errq):
 		assert inq is not None and outq is not None
 		while True:
 			inmsg = inq.get()
-			if inmsg is None or inmsg is False: # poison pill
-				outq.put(inmsg) # poison queue
+			if inmsg is None: # poison pill
+				outq.put(None) # poison queue
+				break
+			elif inmsg is False:
+				outq.put(False)
+				errq.put(False)
 				break
 			for outmsg in self.event(inmsg):
 				outq.put(outmsg)
@@ -912,9 +922,9 @@ class OOFile():
 	#
 	#
 	@staticmethod
-	def run(pipename, fn, outq):
+	def run(pipename, fn, errq, outq):
 		try:
-			OOFile.parse(pipename, fn, outq)
+			OOFile.parse(pipename, fn, errq, outq)
 		except BaseException as e:
 			logging.critical('OOFile.run exception: {} {}'.format(type(e), e))
 			outq.put(False) # poison queue
@@ -922,7 +932,7 @@ class OOFile():
 	# Open file using desktop and parse and enqueue messages representing paragraphs.
 	#
 	@staticmethod
-	def parse(pipename, fn, outq):
+	def parse(pipename, fn, errq, outq):
 		assert fn is not None and outq is not None
 		doc = None
 		# get desktop
@@ -1000,10 +1010,27 @@ class OOFile():
 			else:
 				logging.warning('OOFile.parse unknown weight: {}'.format(weightn))
 				weight = None
-			# enqueue message
 			message = {'line': s, 'adjust': adjust, 'lmargin': lmargin, 'weight': weight, 'style': style}
+			# check for error message
+			if errq.qsize() > 0:
+				try:
+					inmsg = errq.get(block=False)
+					OOFile.close(doc)
+					outq.put(False) # poison output queue and exit
+					return
+				except queue.Empty as e:
+					logging.warning('OOFile.parse errq size weirdness')
+			# enqueue message
 			outq.put(message)
 		# close file
+		OOFile.close(doc)
+		# poison queue
+		outq.put(None)
+	##
+	#
+	#
+	@staticmethod
+	def close(doc):
 		# See <https://wiki.openoffice.org/wiki/Documentation/DevGuide/OfficeDev/Closing_Documents>.
 		logging.debug('OOFile closing: {}'.format(doc))
 		try:
@@ -1014,8 +1041,6 @@ class OOFile():
 			logging.critical('OOFile.parse uno.DisposedException: {} {}'.format(doc, e))
 		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
 			logging.critical('OOFile.parse uno.RuntimeException: {} {}'.format(doc, e))
-		# poison queue
-		outq.put(None)
 	##
 	# Get an XEnumeration of objects from a given object supporting the
 	# XEnumerationAccess interface.
