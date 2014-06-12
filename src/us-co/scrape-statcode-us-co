@@ -487,7 +487,7 @@ class OOFileParser:
 		return self.transition_idle(signal)
 	def event_idle(self, signal):
 		logging.uberdebug('idle')
-		line, adjust, lmargin = signal['line'], signal['adjust'], signal['lmargin']
+		line, adjust, lmargin, weight = signal['line'], signal['adjust'], signal['lmargin'], signal['weight']
 		if line == '':
 			return self.transition_self(signal)
 		elif lmargin > 0:
@@ -498,6 +498,9 @@ class OOFileParser:
 			return self.transition_subsection(signal)
 		elif OOFileParser.test_heirarchy(line):
 			return self.transition_heirarchy(signal)
+		elif OOFileParser.test_anonymous_heirarchy(line, adjust, weight):
+			# XXX skip anonymous heirarchies
+			return self.transition_self(signal)
 		# XXX should we only be able to enter subheader state
 		# from heirarchy state to prevent mistaking text for subheaders?
 #		elif adjust == 'center' and not line.startswith('WARNING'):
@@ -511,7 +514,7 @@ class OOFileParser:
 	#
 	def event_heirarchy(self, signal):
 		logging.uberdebug('heirarchy')
-		line, adjust = signal['line'], signal['adjust']
+		line, adjust, weight = signal['line'], signal['adjust'], signal['weight']
 		if line == '':
 			# don't transition because we may get subheader
 			return self.transition_self(signal)
@@ -519,6 +522,9 @@ class OOFileParser:
 			return self.transition_heirarchy_flush(self.transition_section, signal)
 		elif OOFileParser.test_heirarchy(line):
 			return self.transition_heirarchy_flush(self.transition_heirarchy, signal)
+		elif OOFileParser.test_anonymous_heirarchy(line, adjust, weight):
+			# XXX skip anonymous heirarchies
+			return self.transition_self(signal)
 		elif adjust == 'center': # XXX should we test on last_line_ended_with_colon?
 			return self.transition_heirarchy_subheader(signal)
 		else: # XXX is there something better to do here? will a subheader ever not be centered?
@@ -618,10 +624,13 @@ class OOFileParser:
 	##
 	# Append input signal information to stashed output signal.
 	#
+	# XXX Always guard against anonymous heirarchies to avoid
+	# crashes on lack of incomplete heirarchy in stash.
+	#
 	def transition_heirarchy_subheader(self, signal):
 		logging.debug('subheader: {}'.format(signal))
-		line, weight = signal['line'], signal['weight']
-		if weight != 'bold': # XXX skip anonymous heirarchies
+		if self.stash is not None:
+			line, weight = signal['line'], signal['weight']
 			head, status = OOFileParser.parse_subheader(line)
 			if head is not None:
 				if self.stash['heading'] is not None:
@@ -633,6 +642,8 @@ class OOFileParser:
 					self.stash['status'] += ' ' + status
 				else:
 					self.stash['status'] = status
+		else:
+			logging.warning('subheader stash is None')
 		self.state = self.StateEnum.heirarchy
 		return []
 	##
@@ -697,7 +708,16 @@ class OOFileParser:
 		# XXX should there be a space after each?
 		# XXX is it always a digit after the word?
 		# XXX Title 24, Article 60, Part 22/25 have articles within!?
-		return len(line) and (line.startswith('TITLE ') and line.split('TITLE ',1)[1][0].isdigit() or line.startswith('PART ') and line.split('PART ',1)[1][0].isdigit() or line.startswith('SUBPART ') and line.split('SUBPART ',1)[1][0].isdigit() or line.startswith('ARTICLE ') and line.split('ARTICLE ',1)[1][0].isdigit()) and not line.endswith('.')
+		# XXX Section 14-5-609 starts Part C, so alphanumeric?
+		return len(line) and (line.startswith('TITLE ') and line.split('TITLE ',1)[1][0].isdigit() or line.startswith('PART ') and line.split('PART ',1)[1][0].isalnum() or line.startswith('SUBPART ') and line.split('SUBPART ',1)[1][0].isalnum() or line.startswith('ARTICLE ') and line.split('ARTICLE ',1)[1][0].isdigit()) and not line.endswith('.')
+	##
+	# Test for anonymous (untyped, only with heading) heirarchies.
+	#
+	# XXX need more robust logic for checking 'A.' types
+	#
+	@staticmethod
+	def test_anonymous_heirarchy(line, adjust, weight):
+		return adjust == 'center' and (weight == 'bold' or line.startswith('A.') or line.startswith('B.') or line.startswith('C.') or line.startswith('D.'))
 	##
 	#
 	#
