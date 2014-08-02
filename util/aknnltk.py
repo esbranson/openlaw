@@ -1,3 +1,5 @@
+#! /usr/bin/python3 -uW all
+# -*- coding: utf-8 -*-
 ##
 # Corpus reader for Akoma Ntoso documents.
 #
