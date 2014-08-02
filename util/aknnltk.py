@@ -8,7 +8,7 @@
 # t.plot(20)
 #
 
-from nltk.tokenize import WordPunctTokenizer
+from nltk.tokenize import word_tokenize, sent_tokenize
 from nltk.corpus.reader.xmldocs import XMLCorpusReader
 
 class AKNCorpusReader(XMLCorpusReader):
@@ -19,18 +19,25 @@ class AKNCorpusReader(XMLCorpusReader):
 	def __init__(self, root, fileids):
 		XMLCorpusReader.__init__(self, root, fileids)
 	
-	def xml(self, fileid=None):
-		return XMLCorpusReader.xml(self, fileid)
-	
 	def words(self, fileid=None):
 		"""
 		Returns all of the words and puncuation symbols in the specified file
-		that were in 'section//p' text nodes.
+		that were in '//section//content' text nodes.
 		"""
-		elt = self.xml(fileid).iterfind('.//section//p')
-		word_tokenizer = WordPunctTokenizer()
-		return [val for subl in [word_tokenizer.tokenize(nodetext) for nodetext in [''.join(el.itertext()) for el in elt]] for val in subl]
+		return [val for subl in [word_tokenize(sent) for sent in self.sents(fileid)] for val in subl]
+
+	def sents(self, fileid=None):
+		"""
+		Returns all of the sentences in the specified file
+		that were in '//section//content' text nodes.
+		"""
+		return [val for subl in [sent_tokenize(para) for para in self.paras(fileid)] for val in subl]
 	
-	def raw(self, fileids=None):
-		return XMLCorpusReader.raw(self, fileids)
+	def paras(self, fileid=None):
+		"""
+		Returns all of the paragraphs in the specified file
+		that were in '//section//content' text nodes.
+		"""
+		els = self.xml(fileid).iterfind('.//{http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14}section//{http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14}content')
+		return [''.join(el.itertext()) for el in els]
 
