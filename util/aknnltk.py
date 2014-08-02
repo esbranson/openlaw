@@ -3,13 +3,10 @@
 ##
 # Corpus reader for Akoma Ntoso documents.
 #
-# import nltk.text, aknnltk
-# t = nltk.text.Text(aknnltk.AKNCorpusReader('/tmp/openlaw-test', '.*\.xml').words('pen.xml'))
-# t.plot(20)
-#
 
 from nltk.tokenize import word_tokenize, sent_tokenize
 from nltk.corpus.reader.xmldocs import XMLCorpusReader
+import unittest
 
 class AKNCorpusReader(XMLCorpusReader):
 	"""
@@ -40,4 +37,17 @@ class AKNCorpusReader(XMLCorpusReader):
 		"""
 		els = self.xml(fileid).iterfind('.//{http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14}section//{http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14}content')
 		return [''.join(el.itertext()) for el in els]
+
+class MyTest(unittest.TestCase):
+	def test(self):
+		from nltk.text import Text
+		corpus = AKNCorpusReader('/tmp/openlaw-test/', '.*\.xml')
+		t1 = Text(corpus.words('akn-usc18.xml'))
+		t1.concordance('murder')
+		t2 = Text(corpus.words('PEN.xml'))
+		t2.concordance('murder')
+#		t.plot(20)
+
+if __name__ == "__main__":
+	unittest.main()
 
