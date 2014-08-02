@@ -1,0 +1,779 @@
+#! /usr/bin/python3 -uW all
+# -*- coding: utf-8 -*-
+
+usage="""
+scrape-regcode-us-ca - convert the California Code of Regulations into Akoma Ntoso
+
+See <https://en.wikipedia.org/wiki/California_Code_of_Regulations>. Given titles as
+RTF files, in order, this will output them as an Akoma Ntoso XML file.
+
+Usage:	scrape-regcode-us-ca [options] file [file ...]
+Arguments:
+
+	file		input RTF file(s)
+	-o file		output file ('-' for stdout) (default: stdout)
+	-n num		number of parallel threads (default: 2)
+	-p num		number of Open Office processes (default: 1)
+	-d		enable debuging output (default: warnings only)
+"""
+
+import sys
+import os
+import getopt
+import lxml.etree as etree
+import uno
+import unohelper
+import shlex
+import subprocess
+import time
+import logging
+import mimetypes
+import enum
+import collections
+import concurrent.futures
+import threading
+import queue
+import tempfile
+import types
+import re
+import html
+
+##
+# Entry function: Parse paramters, call main function.
+#
+def main():
+	fout = sys.stdout.buffer
+	debug = logging.WARNING
+	threads = 2
+	processes = 1
+	logging.SUPERDEBUG = logging.DEBUG-2 # XXX monkey fix
+	logging.UBERDEBUG = logging.DEBUG-4
+
+	# parse arguments
+	try:
+		opts, args = getopt.getopt(sys.argv[1:], 'o:n:p:dh')
+	except getopt.GetoptError:
+		logging.fatal('getopt error {}'.format(usage))
+		return 1
+
+	for opt, arg in opts:
+		if opt in {'-d', '--debug'}:
+			if debug is logging.WARNING:
+				debug = logging.INFO
+			elif debug is logging.INFO:
+				debug = logging.DEBUG
+			elif debug is logging.DEBUG:
+				debug = logging.SUPERDEBUG
+			else:
+				debug = logging.UBERDEBUG
+		elif opt in {'-o'}:
+			fout = arg
+		elif opt in {'-n'}:
+			threads = int(arg)
+		elif opt in {'-p'}:
+			processes = int(arg)
+		elif opt in {'-h', '--help'}:
+			print(opt, usage)
+			return 0
+		else:
+			logging.fatal('invalid flag {}{}'.format(opt, usage))
+			return 1
+
+	if len(args) < 1:
+		logging.fatal('need input files {}'.format(usage))
+		return 1
+	fns = args
+
+	# configure
+	logging.basicConfig(format='{levelname} {process}/{threadName} {message}', style='{', level=debug)
+	logging.addLevelName(logging.SUPERDEBUG, 'SUPERDEBUG')
+	logging.addLevelName(logging.UBERDEBUG, 'UBERDEBUG')
+#	logging.Logger.superdebug = lambda inst, msg, *args, **kwargs: inst.log(logging.SUPERDEBUG, msg, *args, **kwargs)
+	logging.superdebug = lambda msg, *args, **kwargs: logging.log(logging.SUPERDEBUG, msg, *args, **kwargs)
+#	logging.Logger.uberdebug = lambda inst, msg, *args, **kwargs: inst.log(logging.UBERDEBUG, msg, *args, **kwargs)
+	logging.uberdebug = lambda msg, *args, **kwargs: logging.log(logging.UBERDEBUG, msg, *args, **kwargs)
+
+	# do it
+	ret = do_it(fns, fout, processes, threads)
+
+	return ret
+
+##
+# Execute do_parse() against given filenames in parallel.
+#
+def do_it(fns, fout, nprocs, nthreads):
+	ret = 0
+	# start soffice processes
+	procs = []
+	for i in range(nprocs):
+		#pipename, tmpd, p = OOFile.start_soffice()
+		procs.append(OOFile.start_soffice())
+	time.sleep(5)
+	# xml body
+	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14", "proposed": "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed"})
+	act = etree.SubElement(akn, 'act', attrib={'name': 'title'})
+	meta = etree.SubElement(act, 'meta')
+	body = etree.SubElement(act, 'body')
+	# submit tasks
+	executor = concurrent.futures.ThreadPoolExecutor(max_workers=nthreads)
+	futures = []
+	for i,fn in enumerate(fns):
+		pipename = procs[i % nprocs][0]
+		# errq signals producer to fail
+		errq = queue.Queue() # XXX beware IPC v. interthread
+		future = executor.submit(do_parse, pipename, fn, errq)
+		futures.append((future, errq))
+	# complete tasks
+	try:
+		for xml in (future.result() for future,errq in futures):
+			# TODO we should have a faster way to detect errors
+			if xml is None:
+				# breaking cleanly triggers else clause
+				# XXX is this really shutting down executor?
+				raise RuntimeError('do_parse failed: xml is None')
+			body.append(xml)
+	except BaseException as e:
+		logging.critical('do_it exception: {} {}'.format(type(e), e))
+		ret = 1
+	else:
+		tree = etree.ElementTree(akn)
+		tree.write(fout)
+	finally:
+		# cleanup
+		logging.info('do_it canceling futures')
+		for (n,(future,errq)) in enumerate(reversed(futures)):
+			logging.debug('do_it canceling {}'.format(n))
+			future.cancel()
+			errq.put(False)
+		logging.debug('do_it shutting down executor')
+		executor.shutdown()
+		for pipename, tmpd, p in procs:
+			logging.debug('do_it terminating {} and waiting on {}'.format(pipename, p))
+			if p.poll() is None: # XXX why does this look wrong?
+				OOFile.terminate_soffice(OOFile.connect_soffice(pipename))
+			p.wait()
+			tmpd.cleanup()
+		logging.info('do_it cleaned up')
+	return ret
+
+##
+# Parse a file and return partial Akoma Ntoso XML.
+#
+def do_parse(pipename, fn, errq):
+	logging.info('do_parse parsing: {}'.format(fn))
+	xml = None
+	try:
+		paraq = queue.Queue(100)
+		xmlq = queue.Queue(50)
+		outq = queue.Queue() # XXX should we bound these?
+		# open files, build threads
+		# TODO different types of files?
+		mime = mimetypes.guess_type(fn)
+		if mime[0] == 'application/rtf':
+			filethread = threading.Thread(target=OOFile.run, args=(pipename, fn, errq, paraq))
+		else:
+			logging.critical('do_parse unknown filetype: {} {}'.format(fn, mime))
+			return None
+		parserthread = threading.Thread(target=OOFileParser.run, args=(paraq, xmlq, errq))
+		builderthread = threading.Thread(target=XMLBuilder.run, args=(xmlq, outq, errq))
+		# parse
+		builderthread.start()
+		parserthread.start()
+		filethread.start()
+		xml = outq.get()
+		if xml is False: # TODO implement better queue poisoning
+			xml = None
+	except OSError as e:
+		logging.critical('do_parse opening files: {}'.format(e))
+		return None
+	except BaseException as e:
+		logging.critical('do_parse exception: {} {}'.format(type(e), e))
+	logging.info('do_parse done: {}'.format(fn))
+	# wait for completion of threads
+	# TODO is this necessary?
+	filethread.join()
+	parserthread.join()
+	builderthread.join()
+	# return
+	return xml
+
+##
+# A state machine that parses a stream of semi-structured document lines
+# into partial Akoma Ntoso XML. The parse() function will consume the input
+# and output an XML object.
+#
+class XMLBuilder:
+	def __init__(self):
+		# `state' is an ordered dictionary with the top-most
+		# element of each type, which represents our heirarchy
+		# of elements
+		self.state = collections.OrderedDict()
+		self.state['title'] = None
+		self.state['appendix'] = None
+		self.state['division'] = None
+		self.state['subdivision'] = None
+		self.state['chapter'] = None
+		self.state['subchapter'] = None
+		self.state['group'] = None
+		self.state['subgroup'] = None
+		self.state['article'] = None
+		self.state['subarticle'] = None
+		self.state['section'] = None
+		self.state['paragraph'] = None
+		self.state['a'] = None # 'subsection'
+		self.state['1'] = None
+		self.state['A'] = None
+		self.state['i'] = None
+	##
+	#
+	#
+	@staticmethod
+	def run(inq, outq, errq):
+		try:
+			builder = XMLBuilder()
+			builder.parse(inq, outq, errq)
+		except BaseException as e:
+			logging.critical('XMLBuilder.run exception: {} {}'.format(type(e), e), exc_info=True)
+			outq.put(False) # poison queue
+			errq.put(False)
+	##
+	# Parse all messages in @inq and return an XML object.
+	#
+	def parse(self, inq, outq, errq):
+		assert inq is not None
+		# process messages
+		while True:
+			msg = inq.get()
+			if msg is None: # poison pill
+				outq.put(self.get_state_top())
+				break
+			elif msg is False:
+				outq.put(False) # poison queue
+				errq.put(False)
+				break
+			logging.superdebug('XMLBuilder.parse: {}'.format(msg))
+			self.event(msg)
+	##
+	# Process a signal.
+	#
+	def event(self, signal):
+		typ = signal['type']
+		if typ in {'heirarchy'}:
+			self.event_heirarchy(signal)
+		else:
+			raise RuntimeError('XMLBuilder: unknown event: {}'.format(signal))
+	##
+	# All heirarchical elements are essentially the same, except that only
+	# sections and below have content and have different ID algorithms.
+	#
+	def event_heirarchy(self, signal):
+		typ, enum, head, text, status = signal['subtype'], signal['enum'], signal['heading'], signal['content'], signal['status']
+		# determine subtype
+		tag = typ
+		if typ is None:
+			tag, typ = self.parse_heirarchy_type(enum)
+		# create element
+		el = etree.Element(tag)
+		# info
+		el.attrib['name'] = self.get_name(typ, enum)
+		el.attrib['id'] = self.get_id(typ, enum)
+		if status:
+			el.attrib['status'] = status
+		if enum:
+			nel = etree.SubElement(el, 'num')
+			nel.text = enum
+		if head:
+			hel = etree.SubElement(el, 'heading')
+			hel.text = head
+		if text:
+			tel = etree.SubElement(el, 'content')
+			pel = etree.SubElement(tel, 'p')
+			pel.text = text
+		# get parent (only title has no parent) and attach
+		parentel = self.get_state_parent(typ)
+		if parentel is not None:
+			parentel.append(el)
+		else:
+			logging.debug('event_section no parent: {}'.format(signal))
+		# update state
+		self.set_state(el, typ)
+	##
+	# Determine the type of element from its enumeration.
+	#
+	# XXX is this different per title?
+	# title 2 calls (b) subdivision and (9) subsection
+	#
+	#  -------------------------
+	# |  s   |       type       |
+	#  -------------------------
+	# |      | paragraph        |
+	# |  a   | subsection       |
+	# |  1   | subsection       |
+	# |  A   | subsection       |
+	# |  iv  | subsection       |
+	#  -------------------------
+	#
+	def parse_heirarchy_type(self, s):
+		if s is None or len(s) == 0:
+			ret = 'paragraph'
+		elif s.isdecimal():
+			ret = '1'
+		elif s.isupper():
+			ret = 'A'
+		elif 'i' not in s and 'v' not in s and 'x' not in s:
+			ret = 'a'
+		elif s == 'i' and self.state['a'] is not None and self.state['a'][0] == 'h':
+			ret = 'a'
+		elif s == 'v' and self.state['a'] is not None and self.state['a'][0] == 'u':
+			ret = 'a'
+		elif s == 'x' and self.state['a'] is not None and self.state['a'][0] == 'w':
+			ret = 'a'
+		else:
+			logging.superdebug('heirarchy_type assume roman num: {}'.format(s))
+			ret = 'i'
+		return 'subsection', ret
+	##
+	#
+	#
+	def get_name(self, typ, enum):
+		assert typ is not None
+		name = typ[0].upper() + typ[1:]
+		if enum is not None: # XXX if no enum, is this required to be unique?
+			name += ' ' + enum
+		return name
+	##
+	# XXX requires non-None parent to have id attribute?
+	#
+	def get_id(self, typ, enum):
+		assert typ is not None and enum is not None
+		parentel = self.get_state_parent(typ)
+		if parentel is None:
+			# XXX only top-most element's parent will be None?
+			ident = '/' + typ + '-' + enum
+		elif typ in {'section'}:
+			superparentel = self.get_state_top()
+			if superparentel is None:
+				logging.critical('get_id superparentel is None')
+				raise RuntimeError('get_id superparentel is None')
+			ident = superparentel.attrib['id'] + '/' + typ + '-' + enum
+		elif XMLBuilder.test_above_section(typ):
+			ident = parentel.attrib['id'] + '/' + typ + '-' + enum
+		elif XMLBuilder.test_below_section(typ):
+			ident = parentel.attrib['id'] + '/' + enum
+		else:
+			logging.critical('get_id unknown type: {}'.format(typ))
+			raise RuntimeError('get_id unknown type: {}'.format(typ))
+		return ident
+	##
+	# Test if type is below section type.
+	#
+	# TODO should probably make more reboust to changes in heirarchy tree
+	#
+	@staticmethod
+	def test_below_section(typ):
+		return typ in {'paragraph', 'a', '1', 'A', 'i'}
+	##
+	# Test if type is below section type.
+	#
+	# TODO should probably make more reboust to changes in heirarchy tree
+	#
+	@staticmethod
+	def test_above_section(typ):
+		return typ in {'title', 'appendix', 'division', 'subdivision', 'chapter', 'subchapter', 'group', 'subgroup', 'article', 'subarticle'}
+	##
+	# Get the lowest non-None element above type, or None if its the highest.
+	#
+	def get_state_parent(self, typ):
+		# get a reversed list of keys above typ
+		keys = list(self.state.keys())
+		keys = reversed(keys[:keys.index(typ)])
+		# get bottom-most element above typ
+		for key in keys:
+			if self.state[key] is not None:
+				return self.state[key]
+		return None
+	##
+	# Get and return the top-most element.
+	#
+	def get_state_top(self):
+		for key in self.state.keys():
+			if self.state[key] is not None:
+				return self.state[key]
+	##
+	# Update (and normalize) state.
+	#
+	def set_state(self, el, typ):
+		# update state
+		self.state[typ] = el
+		# normalize state: clear all elements below type from state
+		keys = list(self.state.keys())
+		keys = keys[keys.index(typ)+1:]
+		for key in keys:
+			self.state[key] = None
+
+##
+# A state machine program that parses a stream of unstructured lines into
+# a stream of structured elements.
+#
+# Its essentially a Mealy machine, whose output is a list of
+# structured elements, which are returned on event(). The parse() function
+# will drive the event loop and yield each such line.
+#
+class OOFileParser:
+	##
+	#
+	#
+	@staticmethod
+	def run(inq, outq, errq):
+		try:
+			OOFileParser.parse(inq, outq, errq)
+		except BaseException as e:
+			logging.critical('OOFileParser.run exception: {} {}'.format(type(e), e), exc_info=True)
+			outq.put(False) # poison queue
+			errq.put(False)
+	##
+	# Parse messages from @inq and output resulting messages in @outq.
+	#
+	@staticmethod
+	def parse(inq, outq, errq):
+		assert inq is not None and outq is not None
+		while True:
+			inmsg = inq.get()
+			if inmsg is None: # poison pill
+				outq.put(None) # poison queue
+				break
+			elif inmsg is False:
+				outq.put(False)
+				errq.put(False)
+				break
+			for outmsg in OOFileParser.event(inmsg):
+				outq.put(outmsg)
+	##
+	#
+	#
+	@staticmethod
+	def event(signal):
+		line, style = signal['line'], signal['style']
+		logging.uberdebug('event line: {} {}'.format(style, repr(line)))
+		if style in {'LVL0', 'LVL1', 'LVL2', 'LVL3', 'LVL4', 'LVL5', 'LVL6', 'SECTION', 'APPENDIX'}:
+			return OOFileParser.event_org(signal)
+		elif style in {'NOTEP', 'HISTP'}:
+			return OOFileParser.event_nh(signal)
+		elif style in {'SECTION PARAGRAPH', 'ANOTEP'}:
+			return OOFileParser.event_subsec(signal)
+		else:
+			return []
+	##
+	#
+	#
+	@staticmethod
+	def event_org(signal):
+		line, style = signal['line'], signal['style']
+		typ, enum, head, status = OOFileParser.tokenize_org(line, style)
+		output = {'type': 'heirarchy', 'subtype': typ, 'name': head, 'enum': enum, 'heading': head, 'content': None, 'status': status}
+		return [output]
+	##
+	#
+	#
+	@staticmethod
+	def event_nh(signal):
+		line, style = signal['line'], signal['style']
+		if style in {'NOTEP'}:
+			typ = 'note'
+		elif style in {'HISTP'}:
+			typ = 'history'
+		output = {'type': typ, 'subtype': None, 'name': None, 'enum': None, 'heading': None, 'content': line, 'status': None}
+		return [output]
+	##
+	#
+	#
+	@staticmethod
+	def event_subsec(signal):
+		line = signal['line']
+		enum, text = OOFileParser.tokenize_subsec(line)
+		output = {'type': 'heirarchy', 'subtype': None, 'name': None, 'enum': enum, 'heading': None, 'content': text, 'status': None}
+		return [output]
+	##
+	# XXX fix return values on error to return something reasonable
+	#
+	@staticmethod
+	def tokenize_org(line, style):
+		orgre = '(TITLE|Division|Part|Subdivision|Chapter|Subchapter|Group|Subgroup|Article|Subarticle|Appendix)\s+(\d+.*)\.\s*(.*)\s+(\[Repealed\]|\[Renumbered\]|\[Reserved\])*\**'
+		orgrens = '(TITLE|Division|Part|Subdivision|Chapter|Subchapter|Group|Subgroup|Article|Subarticle|Appendix)\s+(\d+.*)\.\s*(.*)'
+		appre = 'Appendix\s(.+?)\s*(.*)'
+		secre = '§(\d+.*?)\.\s(.*?)\.\s*(\[Repealed\]|\[Renumbered\]|\[Reserved\])*'
+		secrenp = '§(\d+.*?)\.\s(.*)' # NOTE some section headings don't end with a period
+		secrenp2 = '§(\d+.*?)\s(.*)\.*'
+
+		typ = None
+		enum = None
+		head = None
+		status = None
+
+		if style in {'SECTION'}:
+			typ = 'section'
+			m = re.match(secre, line)
+			if m is None:
+				logging.warning('tokenize: {} did not match secre on {}'.format(style, line))
+				m = re.match(secrenp, line)
+				if not m:
+					logging.warning('tokenize: {} did not match secrenp on {}'.format(style, line))
+					m = re.match(secrenp2, line)
+					if not m:
+						logging.warning('tokenize: {} did not match secrenp2 on {}'.format(style, line))
+						head = line
+					else:
+						enum, head, status = OOFileParser.tokenize_org_groups(m.groups())
+				else:
+					enum, head, status = OOFileParser.tokenize_org_groups(m.groups())
+			else:
+				enum, head, status = OOFileParser.tokenize_org_groups(m.groups())
+		else:
+			if re.search('\[|\*', line):
+				m = re.match(orgre, line)
+			else:
+				m = re.match(orgrens, line)
+			if not m:
+				m = re.match(appre, line)
+				if not m:
+					logging.warning('tokenize: {} did not match appre on {}'.format(style, line))
+					head = line
+				else:
+					typ = 'appendix'
+					enum = m.group(1)
+					head = m.group(2)
+			else:
+				groups = m.groups()
+				typ = html.escape(groups[0]).lower()
+				enum = html.escape(groups[1])
+				head = html.escape(groups[2]).rstrip('.') # XXX why is the period being included?
+				if len(groups) == 4 and groups[3]:
+					status = groups[3].strip('[]*').lower()
+				else:
+					status = None
+		return (typ, enum, head, status)
+	##
+	#
+	#
+	@staticmethod
+	def tokenize_org_groups(groups):
+		enum = head = status = None
+		if groups[0] is not None:
+			enum = html.escape(groups[0])
+		if groups[1] is not None:
+			head = html.escape(groups[1])+'.'
+		else:
+			logging.warning('tokenize: secre.group(2) is None')
+			head = line
+		if len(groups) > 2 and groups[2] is not None:
+			status = groups[2].strip('[]*').lower()
+		return (enum, head, status)
+	##
+	#
+	#
+	@staticmethod
+	def tokenize_subsec(line):
+		if line.startswith('('):
+			enums, rest = line.split(')',1)
+			enum = enums.lstrip('(')
+			text = rest.strip()
+		else:
+			enum = '' # XXX this will be used in ID
+			text = line
+		return enum, text
+
+##
+#
+#
+class OOFile():
+	##
+	#
+	#
+	@staticmethod
+	def run(pipename, fn, errq, outq):
+		try:
+			OOFile.parse(pipename, fn, errq, outq)
+		except BaseException as e:
+			logging.critical('OOFile.run exception: {} {}'.format(type(e), e))
+			outq.put(False) # poison queue
+	##
+	# Open file using desktop and parse and enqueue messages representing paragraphs.
+	#
+	@staticmethod
+	def parse(pipename, fn, errq, outq):
+		assert fn is not None and outq is not None
+		doc = None
+		# get desktop
+		desktop = OOFile.connect_soffice(pipename)
+		if not desktop:
+			logging.critical('OOFile.parse no desktop')
+			outq.put(False)
+			return
+		# open file
+		url = unohelper.systemPathToFileUrl(os.path.abspath(fn))
+		try:
+			doc = desktop.loadComponentFromURL(url ,'_blank', 0, (uno.createUnoStruct('com.sun.star.beans.PropertyValue', 'ReadOnly', 0, True, 0),))
+		except uno.getClass('com.sun.star.lang.IllegalArgumentException') as e:
+			logging.critical('OOFile.parse file not found: {}'.format(filename))
+			outq.put(False)
+			return
+		except uno.getClass('com.sun.star.lang.DisposedException') as e:
+			logging.critical('OOFile.parse desktop bridge died: {}'.format(e))
+			outq.put(False)
+			return
+		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
+			logging.critical('OOFile.parse desktop exception: {}'.format(e))
+			outq.put(False)
+			return
+		if doc is None:
+			logging.critical('OOFile.parse doc is None')
+			outq.put(False)
+			return
+		# get the com.sun.star.text.Text service and get an XEnumeration of com.sun.star.text.Paragraph objects from the XEnumerationAccess
+		for para in OOFile.XEnumeration(doc.getText()):
+			lmargin = None
+			adjust = None
+			weightn = -1
+			style = None
+			# skip non-paragraphs
+			if not para.supportsService('com.sun.star.text.Paragraph'):
+				continue
+			# get left margin
+			if para.supportsService('com.sun.star.style.ParagraphProperties') and hasattr(para, 'ParaLeftMargin'):
+				lmargin = para.ParaLeftMargin
+			# get adjustment
+			if para.supportsService('com.sun.star.style.ParagraphProperties') and hasattr(para, 'ParaAdjust'):
+				adjustn = para.ParaAdjust
+			ss = []
+			# get an XEnumeration of com.sun.star.text.TextPortion objects
+			for portion in OOFile.XEnumeration(para):
+				# skip non-text portions
+				if portion.TextPortionType != 'Text':
+					continue
+				# get portion string
+				ss.append(portion.getString())
+				# get the last portion's weight
+				if portion.supportsService('com.sun.star.style.CharacterProperties') and hasattr(portion, 'CharWeight'):
+					weightn = portion.CharWeight
+				# get the last portion's style
+				if portion.supportsService('com.sun.star.style.ParagraphProperties') and hasattr(portion, 'ParaStyleName'):
+					style = portion.ParaStyleName # XXX need to strip?
+			# interpret data
+			s = str.join('', ss)
+			if adjustn == 3: # com.sun.star.style.ParagraphAdjust
+				adjust = 'center'
+			elif adjustn == 0:
+				adjust = 'left'
+			elif adjustn == 2:
+				adjust = 'block'
+			else:
+				logging.warning('OOFile.parse unknown adjust: {}'.format(adjustn))
+				adjust = None
+			if round(weightn) == 100: # com.sun.star.awt.FontWeight
+				weight = 'normal'
+			elif round(weightn) == 150:
+				weight = 'bold'
+			elif weightn == -1:
+				weight = None
+			else:
+				logging.warning('OOFile.parse unknown weight: {}'.format(weightn))
+				weight = None
+			message = {'line': s, 'adjust': adjust, 'lmargin': lmargin, 'weight': weight, 'style': style}
+			# check for error message
+			if errq.qsize() > 0:
+				try:
+					inmsg = errq.get(block=False)
+					OOFile.close(doc)
+					outq.put(False) # poison output queue and exit
+					return
+				except queue.Empty as e:
+					logging.warning('OOFile.parse errq size weirdness')
+			# enqueue message
+			outq.put(message)
+		# close file
+		OOFile.close(doc)
+		# poison queue
+		outq.put(None)
+	##
+	#
+	#
+	@staticmethod
+	def close(doc):
+		# See <https://wiki.openoffice.org/wiki/Documentation/DevGuide/OfficeDev/Closing_Documents>.
+		logging.debug('OOFile closing: {}'.format(doc))
+		try:
+			if doc is not None:
+				# XXX we should check for the com.sun.star.util.XCloseable interface first
+				doc.close(True)
+		except uno.getClass('com.sun.star.lang.DisposedException') as e:
+			logging.critical('OOFile.parse uno.DisposedException: {} {}'.format(doc, e))
+		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
+			logging.critical('OOFile.parse uno.RuntimeException: {} {}'.format(doc, e))
+	##
+	# Get an XEnumeration of objects from a given object supporting the
+	# XEnumerationAccess interface.
+	#
+	@staticmethod
+	def XEnumeration(obj):
+		xenum = obj.createEnumeration()
+		while xenum.hasMoreElements():
+			yield xenum.nextElement()
+	##
+	# TODO make POSIX/Windows agnostic, e.g., USERPROFILE instead of HOME.
+	#
+	@staticmethod
+	def start_soffice(pipename=None):
+		if pipename is None:
+			pipename = 'officepipe-'+next(tempfile._RandomNameSequence())
+		tmpd = tempfile.TemporaryDirectory()
+		cmd = 'soffice --accept="pipe,name='+pipename+';urp;StarOffice.ServiceManager" --norestore --nologo --headless --nolockcheck'
+		p = subprocess.Popen(shlex.split(cmd), env={"HOME": tmpd.name}, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+		return pipename, tmpd, p
+
+	##
+	# Connect to a running soffice instance and return a XDesktop object.
+	#
+	@staticmethod
+	def connect_soffice(pipename, tries=5, sleep=5):
+		context = None
+		desktop = None
+		local = uno.getComponentContext()
+		resolver = local.ServiceManager.createInstanceWithContext('com.sun.star.bridge.UnoUrlResolver', local)
+		resolvurl = 'uno:pipe,name='+pipename+';urp;StarOffice.ComponentContext'
+		for i in range(tries):
+			try:
+				context = resolver.resolve(resolvurl)
+				if context is not None:
+					desktop = context.ServiceManager.createInstanceWithContext('com.sun.star.frame.Desktop', context)
+			except uno.getClass('com.sun.star.lang.DisposedException') as e:
+				logging.critical('OOFile.connect_soffice bridge died: {}'.format(e))
+				break
+			except uno.getClass('com.sun.star.connection.NoConnectException') as e:
+				logging.debug('OOFile.connect_soffice failed to connect {} / {}'.format(i+1, tries))
+				time.sleep(sleep)
+		if context is None or desktop is None:
+			logging.warning('OOFile.connect_soffice failed to connect')
+		return desktop
+
+	##
+	#
+	#
+	@staticmethod
+	def terminate_soffice(desktop):
+		if desktop is None:
+			logging.debug('OOFile.terminate_soffice desktop None')
+			return False
+		try:
+			desktop.terminate() # kills soffice
+		except uno.getClass('com.sun.star.lang.DisposedException') as e: # XXX needed?
+			logging.critical('OOFile.terminate_soffice uno.DisposedException: {} {}'.format(desktop, e))
+			return False
+		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
+			logging.critical('OOFile.terminate_soffice uno.RuntimeException: {} {}'.format(desktop, e))
+			return False
+		return True
+
+# do it
+if __name__ == "__main__":
+	sys.exit(main())
+
