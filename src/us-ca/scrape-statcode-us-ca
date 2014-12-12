@@ -59,6 +59,8 @@ xslt = etree.XSLT(etree.XML("""<?xml version="1.0"?>
 		</xsl:attribute>
 	</xsl:template>
 
+	<!--<xsl:template match="span[@class='SmallCaps']"/>-->
+
 	<xsl:template match="span[@class='EnSpace']">
 		<xsl:text> </xsl:text>
 	</xsl:template>
@@ -67,8 +69,8 @@ xslt = etree.XSLT(etree.XML("""<?xml version="1.0"?>
 		<xsl:text> </xsl:text>
 	</xsl:template>
 
-	<xsl:template match="text()" priority="2">
-		<xsl:value-of select="normalize-space()"/>
+	<xsl:template match="text()">
+		<xsl:value-of select="translate(.,'&#xA;','')"/>
 	</xsl:template>
 
 </xsl:stylesheet>"""))
@@ -130,7 +132,9 @@ def code2akn(zfn, law, code):
 	logging.info('converting {}...'.format(code))
 	zf = zipfile.ZipFile(zfn)
 #	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD08", "proposed": "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD05.proposed", "uslm": "http://xml.house.gov/schemas/uslm/1.0", "xhtml": "http://www.w3.org/1999/xhtml", "dc": "http://purl.org/dc/elements/1.1/", "dcterms": "http://purl.org/dc/terms/"})
-	akn = etree.Element('akomaNtoso')
+#	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14"})
+	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14", "proposed": "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed"})
+#	akn = etree.Element('akomaNtoso')
 	doc = akn.makeelement('doc', attrib={'name': 'code'})
 	akn.append(doc)
 	meta = doc.makeelement('meta')
@@ -152,12 +156,20 @@ def code2akn_r(zf, parent_el, item, unk_count):
 	elid = build_hcontainer_id(typ, enum, parent_el, unk_count)
 #	elname = build_name(typ, enum, head)
 #	this_el = parent_el.makeelement(typ, attrib={'id': elid, 'name': elname})
-	this_el = parent_el.makeelement(typ, attrib={'id': elid})
+	if typ == 'book':
+#		this_el = parent_el.makeelement(typ, attrib={'id': elid, '{http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed}abbrev': enum}, nsmap={'proposed': 'http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed'})
+		this_el = parent_el.makeelement(typ, attrib={'id': elid, '{http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed}abbrev': enum})
+	else:
+		this_el = parent_el.makeelement(typ, attrib={'id': elid})
 	parent_el.append(this_el)
 	if enum is not None:
 		num_el = this_el.makeelement('num')
 		num_el.text = enum
 		this_el.append(num_el)
+	if head is not None:
+		heading_el = this_el.makeelement('heading')
+		heading_el.text = head
+		this_el.append(heading_el)
 
 	# sub org items
 	for subitem in item[1]:
@@ -172,9 +184,10 @@ def code2akn_r(zf, parent_el, item, unk_count):
 #		section_el = this_el.makeelement('section', attrib={'id': elid})
 		section_el = this_el.makeelement('section', attrib={'id': elid, 'fn': fn})
 		this_el.append(section_el)
-		num_el = section_el.makeelement('num')
-		num_el.text = enum
-		section_el.append(num_el)
+		if enum is not None:
+			num_el = section_el.makeelement('num')
+			num_el.text = enum
+			section_el.append(num_el)
 		with zf.open(fn) as f:
 			caml_el = xslt(etree.parse(f)).getroot()
 		caml2akn(section_el, caml_el)
@@ -532,6 +545,9 @@ caml2akn_re3 = re.compile('^\(([^)]+)\)\s*\(([^)]+)\)\s*\(([^)]+)\)(.*)')
 # TODO: Some 'p' elements without section intros should be
 # attached to the top-level section element, not their
 # apparent parent. We may have to manual decide these cases.
+# Examples include:
+#
+# /pen/section-182/subdivision-a
 #
 def caml2akn(sectionel, camlel):
 	# in form of ('a', Element)

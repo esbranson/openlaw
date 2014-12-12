@@ -241,13 +241,6 @@ class XMLBuilder:
 			logging.superdebug('XMLBuilder.parse: {}'.format(msg))
 			self.event(msg)
 	##
-	# Get and return the top-most element.
-	#
-	def get_state_top(self):
-		for key in self.state.keys():
-			if self.state[key] is not None:
-				return self.state[key]
-	##
 	# Process a signal.
 	#
 	def event(self, signal):
@@ -383,6 +376,13 @@ class XMLBuilder:
 			if self.state[key] is not None:
 				return self.state[key]
 		return None
+	##
+	# Get and return the top-most element.
+	#
+	def get_state_top(self):
+		for key in self.state.keys():
+			if self.state[key] is not None:
+				return self.state[key]
 	##
 	# Update (and normalize) state.
 	#

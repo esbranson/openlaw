@@ -1,4 +1,4 @@
-#! /usr/bin/python3 -uW all
+#! /usr/bin/python3 -uW ignore
 # -*- coding: utf-8 -*-
 ##
 # Corpus reader for Akoma Ntoso documents.
@@ -15,7 +15,7 @@ class AKNCorpusReader(XMLCorpusReader):
 	"""
 	def __init__(self, root, fileids):
 		XMLCorpusReader.__init__(self, root, fileids)
-	
+
 	def words(self, fileid=None):
 		"""
 		Returns all of the words and puncuation symbols in the specified file
@@ -29,7 +29,7 @@ class AKNCorpusReader(XMLCorpusReader):
 		that were in '//section//content' text nodes.
 		"""
 		return [val for subl in [sent_tokenize(para) for para in self.paras(fileid)] for val in subl]
-	
+
 	def paras(self, fileid=None):
 		"""
 		Returns all of the paragraphs in the specified file
@@ -43,10 +43,11 @@ class MyTest(unittest.TestCase):
 		from nltk.text import Text
 		corpus = AKNCorpusReader('/tmp/openlaw-test/', '.*\.xml')
 		t1 = Text(corpus.words('akn-usc18.xml'))
-		t1.concordance('murder')
+		t1.concordance('murder',lines=float('inf'))
+#		t1.plot(20)
 		t2 = Text(corpus.words('PEN.xml'))
-		t2.concordance('murder')
-#		t.plot(20)
+		t2.concordance('murder',lines=float('inf'))
+#		t2.plot(20)
 
 if __name__ == "__main__":
 	unittest.main()
