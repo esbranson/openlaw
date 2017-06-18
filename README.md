@@ -27,6 +27,7 @@ The legal dataset conversions are experimental, and should not be considered a f
 
 The current legal datasets have conversions to Akoma Ntoso:
 
-* United States codified statutes
+* ~~United States Code~~
 * California codified statutes
+* Colorado Revised Statutes
 
