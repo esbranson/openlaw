@@ -13,24 +13,20 @@ Overcoming these barriers is a necessary step for true government and political 
 
 This project is not meant to exist alone in a vacuum. By taking advantage of a global community, this is meant as a working demonstration of the possibilities of this approach.
 
-# Installation
+# Components
 
-Most programs are written in Python 3 and are run from the commandline.
+Most programs are written in Python 3 and are run from the commandline. The `akncat` utility provides functionality similar to the UNIX `cat` utility but for Akoma Ntoso documents. There is also an [NLTK](http://www.nltk.org/) corpus reader for natural language processing.
 
 # Development
 
-Help by converting law--any law--into Akoma Ntoso XML!
+Help by converting law—any law—into Akoma Ntoso XML!
 
 # Status
 
-The legal dataset conversions are experimental, and should not be considered a faithful or official reproduction.
+The legal dataset conversions are experimental, and should not be considered a faithful or official reproduction. They are currently non-conformant to the Akoma Ntoso standard and no tests are done for their validity or compatibility. Given the nature of the collection processes, e.g., lack of documentation, much has been interpreted and misinterpreted.
 
 The current legal datasets have conversions to Akoma Ntoso:
 
 * United States codified statutes
 * California codified statutes
-
-The `akncat` utility provides functionality similar to the UNIX `cat` utility but for Akoma Ntoso documents. There is also an [NLTK](http://www.nltk.org/) corpus reader for natural language processing.
-
-They are currently non-conformant to the Akoma Ntoso standard and no tests are done for their validity or compatibility. Given the nature of the collection processes, e.g., lack of documentation, much has been interpreted and misinterpreted.
 
