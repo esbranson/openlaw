@@ -21,8 +21,7 @@ import re
 try: import lxml.etree as etree
 except ImportError: import xml.etree.ElementTree as etree
 
-xmlns = "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14"
-xmlns_proposed = "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed"
+xmlns = "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/WD17"
 
 ##
 # Entry function. Parse parameters, call main function.
