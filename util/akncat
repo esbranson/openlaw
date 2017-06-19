@@ -4,13 +4,13 @@
 usage="""Usage: akncat [OPTION]... [FILE]...
 Concatenate Akoma Ntoso FILE(s) sections to standard output.
 
-  -a, --abbrev          toggle output of document abbreviation (default: yes)
-  -n, --nums            toggle output of section numbers (default: yes)
-  -t, --headings        toggle output of title/heading/subheading (default: yes)
-  -c, --content         toggle output of section content (default: yes)
-  -r, --refs            toggle output of section references (default: no)
-  -s, --status          toggle output of repealed sections (default: no)
-  -h, --help            display this help and exit
+  -a, --abbr         toggle output of document abbreviation (default: yes)
+  -n, --nums         toggle output of section numbers (default: yes)
+  -t, --headings     toggle output of title/heading/subheading (default: yes)
+  -c, --content      toggle output of section content (default: yes)
+  -r, --refs         toggle output of section references (default: no)
+  -s, --status       toggle output of repealed sections (default: no)
+  -h, --help         display this help and exit
 
 With no FILE, or when FILE is -, read standard input."""
 
@@ -28,7 +28,7 @@ xmlns = "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/WD17"
 #
 def main():
 	do_repealed = False
-	do_abbrev = True
+	do_abbr = True
 	do_number = True
 	do_heading = True
 	do_content = True
@@ -49,8 +49,8 @@ def main():
 			do_number = not do_number
 		elif opt in {'-c', '--content'}:
 			do_content = not do_content
-		elif opt in {'-a', '--abbrev'}:
-			do_abbrev = not do_abbrev
+		elif opt in {'-a', '--abbr'}:
+			do_abbr = not do_abbr
 		elif opt in {'-s', '--status'}:
 			do_repealed = not do_repealed
 		elif opt in {'-h', '--help'}:
@@ -67,32 +67,32 @@ def main():
 				f = open(fn)
 			with f as f:
 				tree = etree.parse(f)
-			do_it(tree, do_repealed, do_abbrev, do_number, do_heading, do_content, do_notes)
+			do_it(tree, do_repealed, do_abbr, do_number, do_heading, do_content, do_notes)
 	except (BrokenPipeError,KeyboardInterrupt):
 		pass
 
 ##
 # TODO
 #
-def do_it(tree, do_repealed, do_abbrev, do_number, do_heading, do_content, do_notes):
+def do_it(tree, do_repealed, do_abbr, do_number, do_heading, do_content, do_notes):
 	numre = '{' + xmlns + '}num'
 	headingre = '{' + xmlns + '}heading'
 	contentre = './/{' + xmlns + '}content/*'
 	flatcontentre = './/{' + xmlns + '}content'
 	metare = '{' + xmlns + '}meta'
-	abbrevre = '{' + xmlns_proposed + '}abbrev'
+	abbrre = '{' + xmlns + '}abbr'
 	if do_repealed:
 		path = '//akn:section'
 	else:
 		path = '//akn:section[not(contains(@status, "repealed"))]'
 	sections = tree.xpath(path, namespaces={'akn': xmlns})
 	trans = str.maketrans('“”’\t', '""\' ', '\n')
-	abbrev = ''
-	if do_abbrev:
+	abbr = ''
+	if do_abbr:
 		el = tree.getroot()[0]
 		for subel in el:
-			if subel.tag != metare and len(subel) and abbrevre in subel[0].attrib:
-				abbrev = subel[0].attrib[abbrevre] + ' '
+			if subel.tag != metare and len(subel) and abbrre in subel[0].attrib:
+				abbr = subel[0].attrib[abbrre] + ' '
 	for section in sections:
 		enum = ''
 		heading = ''
@@ -111,7 +111,7 @@ def do_it(tree, do_repealed, do_abbrev, do_number, do_heading, do_content, do_no
 			if len(content) == 0:
 				els = section.iterfind(flatcontentre)
 				content = ' '.join(''.join(el.itertext()).translate(trans).strip() for el in els)
-		print(abbrev + enum + heading + content)
+		print(abbr + enum + heading + content)
 
 if __name__ == "__main__":
 	main()
