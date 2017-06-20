@@ -21,14 +21,14 @@ class AKNCorpusReader(XMLCorpusReader):
 		Returns all of the words and puncuation symbols in the specified file
 		that were in '//section//content' text nodes.
 		"""
-		return [val for subl in [word_tokenize(sent) for sent in self.sents(fileid)] for val in subl]
+		return (val for subl in (word_tokenize(sent) for sent in self.sents(fileid)) for val in subl)
 
 	def sents(self, fileid=None):
 		"""
 		Returns all of the sentences in the specified file
 		that were in '//section//content' text nodes.
 		"""
-		return [val for subl in [sent_tokenize(para) for para in self.paras(fileid)] for val in subl]
+		return (val for subl in (sent_tokenize(para) for para in self.paras(fileid)) for val in subl)
 
 	def paras(self, fileid=None):
 		"""
@@ -36,7 +36,7 @@ class AKNCorpusReader(XMLCorpusReader):
 		that were in '//section//content' text nodes.
 		"""
 		els = self.xml(fileid).iterfind('.//{http://docs.oasis-open.org/legaldocml/ns/akn/3.0/WD17}section//{http://docs.oasis-open.org/legaldocml/ns/akn/3.0/WD17}content')
-		return [''.join(el.itertext()) for el in els]
+		return (''.join(el.itertext()) for el in els)
 
 class MyTest(unittest.TestCase):
 	def test(self):
