@@ -35,7 +35,7 @@ class AKNCorpusReader(XMLCorpusReader):
 		Returns all of the paragraphs in the specified file
 		that were in '//section//content' text nodes.
 		"""
-		els = self.xml(fileid).iterfind('.//{http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14}section//{http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14}content')
+		els = self.xml(fileid).iterfind('.//{http://docs.oasis-open.org/legaldocml/ns/akn/3.0/WD17}section//{http://docs.oasis-open.org/legaldocml/ns/akn/3.0/WD17}content')
 		return [''.join(el.itertext()) for el in els]
 
 class MyTest(unittest.TestCase):
