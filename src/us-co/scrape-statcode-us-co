@@ -108,7 +108,7 @@ def do_it(fns, fout, nprocs, nthreads):
 		procs.append(OOFile.start_soffice())
 	time.sleep(5)
 	# xml body
-	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD14", "proposed": "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed"})
+	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/WD17"})
 	act = etree.SubElement(akn, 'act', attrib={'name': 'title'})
 	meta = etree.SubElement(act, 'meta')
 	body = etree.SubElement(act, 'body')
