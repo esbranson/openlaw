@@ -548,7 +548,7 @@ class OOFileParser:
 				enum = html.escape(groups[1])
 				head = html.escape(groups[2]).rstrip('.') # XXX why is the period being included?
 				if len(groups) == 4 and groups[3]:
-					status = groups[3].strip('[]*').lower()
+					status = OOFileParser.parse_status(groups[3].strip('[]*').lower())
 				else:
 					status = None
 		return (typ, enum, head, status)
@@ -566,8 +566,22 @@ class OOFileParser:
 			logging.warning('tokenize: secre.group(2) is None')
 			head = line
 		if len(groups) > 2 and groups[2] is not None:
-			status = groups[2].strip('[]*').lower()
+			status = OOFileParser.parse_status(groups[2].strip('[]*').lower())
 		return (enum, head, status)
+	##
+	#
+	#
+	@staticmethod
+	def parse_status(s):
+		s = s.strip('[]*').lower()
+		status = 'unknown'
+		if s == 'repealed':
+			status = 'removed'
+		elif s == 'renumbered':
+			status = 'removed'
+		elif s == 'reserved':
+			status = 'incomplete'
+		return status
 	##
 	#
 	#

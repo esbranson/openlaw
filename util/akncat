@@ -9,7 +9,7 @@ Concatenate Akoma Ntoso FILE(s) sections to standard output.
   -t, --headings     toggle output of title/heading/subheading (default: yes)
   -c, --content      toggle output of section content (default: yes)
   -r, --refs         toggle output of section references (default: no)
-  -s, --status       toggle output of repealed sections (default: no)
+  -s, --status       toggle output of sections with statusType "removed" (default: no)
   -h, --help         display this help and exit
 
 With no FILE, or when FILE is -, read standard input."""
@@ -84,7 +84,7 @@ def do_it(tree, do_repealed, do_abbr, do_number, do_heading, do_content, do_note
 	if do_repealed:
 		path = '//akn:section'
 	else:
-		path = '//akn:section[not(contains(@status, "repealed"))]'
+		path = '//akn:section[not(contains(@status, "removed"))]'
 	sections = tree.xpath(path, namespaces={'akn': xmlns})
 	trans = str.maketrans('“”’\t', '""\' ', '\n')
 	abbr = ''

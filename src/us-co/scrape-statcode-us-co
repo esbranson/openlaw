@@ -736,7 +736,7 @@ class OOFileParser:
 		status = None
 		if s.endswith('(Reserved)'):
 			s,_ = s.rsplit('(Reserved)',1)
-			status = 'reserved'
+			status = 'incomplete'
 		return s or None, status
 	##
 	# Return a parsed section and with any subsection(s).
@@ -780,7 +780,7 @@ class OOFileParser:
 		status = None
 		if s.endswith('(Repealed)'):
 			s,_ = s.rsplit('(Repealed)',1)
-			status = 'repealed'
+			status = 'removed'
 		return s.strip().rstrip('.'), status
 	##
 	# Return a parsed subsection.
@@ -816,7 +816,7 @@ class OOFileParser:
 			# XXX this should be a note or history
 			elif OOFileParser.test_subsec_repealed(s):
 				textl.append(OOFileParser.parse_subsec_repealed(s))
-				status = 'repealed'
+				status = 'removed'
 			# enum indicating a new sub-subsection
 			elif OOFileParser.test_enum(s):
 				logging.uberdebug('tokenize_subsection_r recurs: {}'.format(l[n:]))
@@ -829,7 +829,7 @@ class OOFileParser:
 		text = str.join(' ', textl)
 		if text == 'Repealed.' or text == 'Repealed':
 			text = None
-			status = 'repealed'
+			status = 'removed'
 		text = text or None
 		return enum, status, text, subsecl
 	##
