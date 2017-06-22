@@ -109,7 +109,7 @@ def do_it(fns, fout, nprocs, nthreads):
 	time.sleep(5)
 	# xml body
 	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/WD17"})
-	act = etree.SubElement(akn, 'act', attrib={'name': 'title'})
+	act = etree.SubElement(akn, 'act')
 	meta = etree.SubElement(act, 'meta')
 	body = etree.SubElement(act, 'body')
 	# submit tasks
@@ -261,7 +261,7 @@ class XMLBuilder:
 		# create element
 		el = etree.Element(typ)
 		# info
-		el.attrib['name'] = self.get_name(typ, enum)
+		el.attrib['title'] = self.get_name(typ, enum)
 		el.attrib['id'] = self.get_id(typ, enum)
 		if status:
 			el.attrib['status'] = status

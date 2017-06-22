@@ -155,7 +155,7 @@ def code2akn_r(zf, parent_el, item, unk_count):
 	typ, enum, head = item[0]
 	elid = build_hcontainer_id(typ, enum, parent_el, unk_count)
 #	elname = build_name(typ, enum, head)
-#	this_el = parent_el.makeelement(typ, attrib={'id': elid, 'name': elname})
+#	this_el = parent_el.makeelement(typ, attrib={'id': elid, 'title': elname})
 	if typ == 'book':
 #		this_el = parent_el.makeelement(typ, attrib={'id': elid, '{http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed}abbrev': enum}, nsmap={'proposed': 'http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed'})
 		this_el = parent_el.makeelement(typ, attrib={'id': elid, '{http://docs.oasis-open.org/legaldocml/ns/akn/3.0/CSD15.proposed}abbrev': enum})
@@ -180,7 +180,7 @@ def code2akn_r(zf, parent_el, item, unk_count):
 		enum, fn, (stat_y, stat_c, stat_s, hist) = subitem
 		elid = build_section_id(enum, parent_el)
 #		elname = build_name('section', enum)
-#		section_el = this_el.makeelement('section', attrib={'id': elid, 'name': elname})
+#		section_el = this_el.makeelement('section', attrib={'id': elid, 'title': elname})
 #		section_el = this_el.makeelement('section', attrib={'id': elid})
 		section_el = this_el.makeelement('section', attrib={'id': elid, 'fn': fn})
 		this_el.append(section_el)
