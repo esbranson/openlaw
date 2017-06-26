@@ -18,25 +18,27 @@ class AKNCorpusReader(XMLCorpusReader):
 
 	def words(self, fileid=None):
 		"""
-		Returns all of the words and puncuation symbols in the specified file
-		that were in '//section//content' text nodes.
+		Returns a list of strings representing word tokens.
 		"""
-		return (val for subl in (word_tokenize(sent) for sent in self.sents(fileid)) for val in subl)
+		return (val for subl in self.sents(fileid) for val in subl)
 
 	def sents(self, fileid=None):
 		"""
-		Returns all of the sentences in the specified file
-		that were in '//section//content' text nodes.
+		Returns a list of lists of strings representing word tokens with
+		sentence boundaries intact.
 		"""
-		return (val for subl in (sent_tokenize(para) for para in self.paras(fileid)) for val in subl)
+		return (word_tokenize(sent) for sent in self._sents(fileid))
 
-	def paras(self, fileid=None):
+	def _sents(self, fileid=None):
 		"""
-		Returns all of the paragraphs in the specified file
-		that were in '//section//content' text nodes.
+		Returns all of the sentences in the specified file.
+
+		Returns all of the Akoma Ntoso '//section//content/p' text nodes
+		in the specified file.
 		"""
 		els = self.xml(fileid).iterfind('.//{http://docs.oasis-open.org/legaldocml/ns/akn/3.0/WD17}section//{http://docs.oasis-open.org/legaldocml/ns/akn/3.0/WD17}content')
-		return (''.join(el.itertext()) for el in els)
+		paras = (''.join(el.itertext()) for el in els)
+		return (val for subl in (sent_tokenize(p) for p in paras) for val in subl)
 
 class MyTest(unittest.TestCase):
 	def test(self):
