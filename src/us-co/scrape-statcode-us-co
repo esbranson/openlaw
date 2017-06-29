@@ -41,7 +41,7 @@ import types
 #
 def main():
 	fout = sys.stdout.buffer
-	debug = logging.WARNING
+	debug = logging.INFO
 	threads = 2
 	processes = 1
 	logging.SUPERDEBUG = logging.DEBUG-2 # XXX monkey fix
@@ -56,14 +56,17 @@ def main():
 
 	for opt, arg in opts:
 		if opt in {'-d', '--debug'}:
-			if debug is logging.WARNING:
-				debug = logging.INFO
-			elif debug is logging.INFO:
+			if debug is logging.INFO:
 				debug = logging.DEBUG
 			elif debug is logging.DEBUG:
 				debug = logging.SUPERDEBUG
-			else:
+			elif debug is logging.SUPERDEBUG:
 				debug = logging.UBERDEBUG
+			else:
+				logging.warning("main unknown debugging level")
+				debug = logging.DEBUG
+		elif opt in {'-q', '--quiet'}:
+			debug = logging.WARNING
 		elif opt in {'-o'}:
 			fout = arg
 		elif opt in {'-n'}:
@@ -139,12 +142,16 @@ def do_it(fns, fout, nprocs, nthreads):
 	finally:
 		# cleanup
 		logging.info('do_it cleaning up')
+		logging.debug('do_it poisoning queues and cancelling futures')
 		for future,errq in reversed(futures):
 			future.cancel()
 			errq.put(False)
+		logging.debug('do_it closing executor')
 		executor.shutdown()
+		logging.debug('do_it closing processes')
 		for pipename, tmpd, p in procs:
 			if p.poll() is None:
+				logging.debug('do_it closing soffice')
 				OOFile.terminate_soffice(OOFile.connect_soffice(pipename))
 			p.wait()
 			tmpd.cleanup()
