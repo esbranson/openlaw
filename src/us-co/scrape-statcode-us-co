@@ -342,11 +342,7 @@ class XMLBuilder:
 			# XXX only top-most element's parent will be None?
 			ident = '/' + typ + '-' + enum
 		elif typ in {'section'}:
-			superparentel = self.get_state_top()
-			if superparentel is None:
-				logging.critical('get_id superparentel is None')
-				raise RuntimeError('get_id superparentel is None')
-			ident = superparentel.attrib['id'] + '/' + typ + '-' + enum
+			ident = '/' + typ + '-' + enum
 		elif XMLBuilder.test_above_section(typ):
 			ident = parentel.attrib['id'] + '/' + typ + '-' + enum
 		elif XMLBuilder.test_below_section(typ):
