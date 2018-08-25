@@ -1,0 +1,88 @@
+<!ENTITY % style "B|I|T|M|N|NL|CTR|S1|S2|IT|U|S|AL|DT|IP_5_5_5|CTRK|CTRKB|IP_0_5|J|SUP|SUB|RT|IP_10_10_10|BL|BL_1">
+
+<!ELEMENT P - O (#PCDATA|CATCH_LINE|T_DIV|%style;)*     -- paragraph -->
+<!ATTLIST P N CDATA #IMPLIED>
+<!ELEMENT T - O EMPTY                                   -- tab -->
+<!ELEMENT B - - (#PCDATA|%style;)*>
+<!ELEMENT CTR - - (#PCDATA|%style;)*                    -- apparently this can be with or without enclosing tags -->
+<!ELEMENT CTRK - - (#PCDATA|%style;)*                   -- a block CTR -->
+<!ELEMENT CTRKB - - (#PCDATA|%style;)*                  -- a block CTR -->
+<!ELEMENT DT - O EMPTY                                  -- Im gonna say this is kinda like an indent -->
+<!ELEMENT I - O EMPTY                                   -- Im gonna say this is kinda like an indent -->
+<!ELEMENT RHRTC - - (#PCDATA|%style;)*>
+<!ELEMENT M - O EMPTY                                   -- A large space. -->
+<!ELEMENT AL - O EMPTY                                  -- Im gonna say this is kinda like an indent -->
+<!ELEMENT CATCH_LINE - - (#PCDATA|RHFTO|%style;)*       -- encloses section numbers and associated headings -->
+<!ELEMENT RHFTO - - (#PCDATA)*                          -- encloses section numbers -->
+<!ELEMENT N - O EMPTY                                   -- nonbreaking space -->
+<!ELEMENT NL - O EMPTY                                  -- newline -->
+<!ELEMENT S1 - O EMPTY                                  -- I dont know maybe a vertical space -->
+<!ELEMENT S2 - O EMPTY                                  -- I dont know maybe a vertical space -->
+<!ELEMENT IP_5_5_5 - O EMPTY                            -- I dont know maybe a kinda vertical space -->
+<!ELEMENT IP_0_5 - O EMPTY                              -- I dont know maybe a kinda vertical space -->
+<!ELEMENT IP_10_10_10 - O EMPTY                         -- I dont know maybe a kinda vertical space -->
+<!ELEMENT IT - - (#PCDATA|%style;)*                     -- italicized -->
+<!ELEMENT U - - (#PCDATA|%style;)*                      -- underlined -->
+<!ELEMENT J - - (#PCDATA|%style;)*                      -- italicized -->
+<!ELEMENT SUP - - (#PCDATA|%style;)*                    -- superscript -->
+<!ELEMENT SUB - - (#PCDATA|%style;)*                    -- subscript -->
+<!ELEMENT RT - O EMPTY                                  -- assuming this is a right align -->
+<!ELEMENT BL - O EMPTY                                  -- dont know -->
+<!ELEMENT BL_1 - O EMPTY                                  -- dont know -->
+<!ELEMENT S - - (#PCDATA|%style;)*                                  -- strikethrough -->
+
+<!ELEMENT BLEED - - (#PCDATA|%style;)*>
+<!ELEMENT TITLE_NUM - - (#PCDATA)*>
+<!ELEMENT TITLE_TEXT - - (#PCDATA|RHRTC)*>
+<!ELEMENT ARTICLE_NUM - - (#PCDATA)*>
+<!ELEMENT ARTICLE_TEXT - - (#PCDATA|RHRTC)*>
+<!ELEMENT SECTION_TEXT - - (P|EDITORS_NOTE)*            -- probably should filter out EDITORS_NOTE within SECTION_TEXT -->
+<!ELEMENT TITLE_DIV - - (#PCDATA|%style;)*              -- unnumbered title division heading -->
+<!ELEMENT TITLE_PART - - (#PCDATA|%style;)*           -- numbered or possibly unnumbered article part heading -->
+<!ELEMENT ARTICLE_PART - - (#PCDATA|%style;)*           -- numbered or possibly unnumbered article part heading -->
+
+<!ELEMENT TITLE_ANAL - - (TA_LIST|P|T_DIV)*             -- toc -->
+<!ELEMENT TA_LIST - O (#PCDATA|%style;)*>
+<!ELEMENT ART_ANAL - - (#PCDATA|ART_PART|%style;)*      -- toc -->
+<!ELEMENT T_DIV - O (#PCDATA|%style;)*                  -- counterpart to TITLE_DIV but in toc -->
+<!ELEMENT ANNO_TOC - O (#PCDATA|%style;)*               -- toc entry within a ANNO_NOTE -->
+<!ELEMENT AN_DIV - - (#PCDATA|%style;)*                 -- toc division within a ANNO_NOTE -->
+<!ELEMENT AN_SUB - - (#PCDATA|%style;)*                 -- toc division within a ANNO_NOTE -->
+<!ELEMENT ART_PART - - (#PCDATA|%style;)*               -- counterpart to ARTICLE_PART but in toc -->
+
+<!ELEMENT EDITORS_NOTE - - (#PCDATA|P|%style;)*>
+<!ELEMENT SOURCE_NOTE - - (#PCDATA|%style;)*>
+<!ELEMENT COMMENT_HEAD - - (#PCDATA|%style;)*>
+<!ELEMENT COMMENT_TEXT - - (#PCDATA|P|%style;)*>
+<!ELEMENT ANNO_NOTE - - (ANNO_TEXT|ANNO_TOC|AN_DIV|AN_SUB)*>
+<!ELEMENT ANNO_TEXT - O (#PCDATA|P|%style;)*>
+<!ELEMENT XREF_NOTE - - (#PCDATA|P|%style;)*>
+
+<!ELEMENT CRS O O (BLEED|TITLE_NUM|TITLE_TEXT|TITLE_ANAL|TITLE_DIV|TITLE_PART|ARTICLE_NUM|ARTICLE_TEXT|ARTICLE_PART|ART_ANAL|SECTION_TEXT|EDITORS_NOTE|SOURCE_NOTE|COMMENT_HEAD|COMMENT_TEXT|ANNO_NOTE|XREF_NOTE)*>
+
+<!ENTITY amp     CDATA "&#38;"                          -- ampersand -->
+<!ENTITY sect   CDATA "&#167;"                          -- section sign -->
+<!ENTITY SECT CDATA "&#167;">
+<!ENTITY I CDATA "&#73;"                                -- fixup -->
+<!ENTITY ampRE CDATA "&#38;RE"                          -- fixup -->
+<!ENTITY RE CDATA "&#38;RE"                             -- fixup -->
+<!ENTITY hyphen CDATA "-">
+<!ENTITY agrave CDATA "a">
+<!ENTITY Tech CDATA "&#38;Tech"                         -- fixup -->
+<!ENTITY A CDATA "&#38;A"                         -- fixup -->
+<!ENTITY percnt CDATA "&#37;"                           -- todo -->
+<!ENTITY deg CDATA "&#37;"                           -- todo -->
+<!ENTITY ntilde CDATA "&#37;"                           -- todo -->
+<!ENTITY rsquo CDATA "&#34;"                           -- todo -->
+<!ENTITY lsquo CDATA "&#34;"                           -- todo -->
+<!ENTITY sup2 CDATA "&#94;2"                           -- todo -->
+<!ENTITY sec   CDATA "&#167;"                          -- section sign -->
+<!ENTITY reg CDATA "(r)"                           -- todo -->
+
+
+
+
+
+
+
+

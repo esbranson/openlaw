@@ -1,0 +1,127 @@
+#!/usr/bin/python3
+
+usage="""
+scrape-statcode-us-co - convert the Colorado Revised Statutes into Akoma Ntoso
+
+Get the data from <https://leg.colorado.gov/colorado-revised-statutes>.
+
+Usage: scrape-statcode-us-co [options] zipfile dcl dtd
+Arguments:
+    zipfile     ZIP file containing the official CRS data
+    dcl         SGML declaration
+    dtd         SGML document type definition
+    
+    -t title    output specific titles (one flag for each)
+    -o file     output file ('-' for stdout) (default: stdout)
+    -n threads  maxmim number of parallel threads (default: 2)
+    -d          enable debuging output (default: warnings only)
+"""
+
+import sys
+import logging
+import getopt
+import os
+import zipfile
+import tempfile
+import shutil
+import subprocess
+import bs4
+
+##
+# Entry function: Parse paramters, call main function.
+#
+def main():
+    titles = []
+    fout = sys.stdout.buffer
+    debug = logging.WARNING
+    threads = 2
+
+    # Configure logging.
+    logging.basicConfig(format='{levelname} {process}/{threadName}: {message}', style='{', level=debug)
+
+    # Parse arguments.
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], 'o:n:p:dh')
+    except getopt.GetoptError:
+        logging.fatal('Getopt error. {}'.format(usage))
+        return 1
+
+    for opt, arg in opts:
+        if opt in {'-h', '--help'}:
+            print(opt, usage)
+            return 0
+        elif opt in {'-d', '--debug'}:
+            if debug is logging.WARNING:
+                debug = logging.INFO
+            elif debug is logging.INFO:
+                debug = logging.DEBUG
+        elif opt in {'-o'}:
+            fout = arg
+        elif opt in {'-n', '--threads'}:
+            threads = int(arg)
+        elif opt in {'-t', '--title'}:
+            titles.append(arg.upper())
+        else:
+            logging.fatal('Invalid flag \"{}\". {}'.format(opt, usage))
+            return 1
+
+    if len(args) < 3:
+        logging.fatal('Need input files. {}'.format(usage))
+        return 1
+    zfn = os.path.abspath(args[0])
+    dclfn = os.path.abspath(args[1])
+    dtdfn = os.path.abspath(args[2])
+    
+    # Todo: Do all titles if none specified.
+
+	# Do it.
+    return do_it(zfn, dclfn, dtdfn, titles, fout, threads)
+
+##
+# Do it.
+#
+def do_it(zfn, dclfn, dtdfn, titles, fout, threads): # Do it.
+    with zipfile.ZipFile(zfn) as zf:
+        # TODO: Convert each desired title in executors.
+        with zf.open("TITLES/title21.txt") as sgml:
+            new_sgml = fix_sgml(sgml, dtdfn)
+            xml = convert_sgml2xml(new_sgml, dclfn)
+            akn = conv_xml2akn(xml)
+
+##
+# Given an official CRS SGML file, return a fixed SGML file. We need to
+# add a DTD declaration, and fix various issues in the file.
+#
+# TODO: Run a diff against the file to fix various issues.
+# XXX: Mind the newlines on different architectures!?
+#
+def fix_sgml(sgml, dtdfn):
+    new_sgml = tempfile.NamedTemporaryFile()
+    new_sgml.write(('<!DOCTYPE CRS SYSTEM "' + dtdfn + "\">\n").encode())
+    shutil.copyfileobj(sgml, new_sgml)
+    return new_sgml
+
+##
+# Convert a CRS SGML file file into XML.
+#
+# NOTE: Requires OpenSP.
+#
+def convert_sgml2xml(sgml, dclfn):
+    xml = tempfile.NamedTemporaryFile(mode='w+')
+    subprocess.run(["osx", dclfn, sgml.name], stdout=xml) # stderr=subprocess.DEVNULL
+    xml.seek(0)
+    return xml
+
+##
+# Convert a CRS SGML-as-XML file into Akoma Ntoso XML.
+#
+# XXX: TODO.
+#
+def conv_xml2akn(xml):
+    soup = bs4.BeautifulSoup(xml, features="lxml")
+    print(soup.prettify())
+
+# <https://docs.python.org/3/library/__main__.html>
+if __name__ == "__main__":
+	main()
+
