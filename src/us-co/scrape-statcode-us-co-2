@@ -33,11 +33,10 @@ import bs4
 def main():
     titles = []
     fout = sys.stdout.buffer
-    debug = logging.WARNING
     threads = 2
 
     # Configure logging.
-    logging.basicConfig(format='{levelname} {process}/{threadName}: {message}', style='{', level=debug)
+    logging.basicConfig(format='{levelname} {process}/{threadName}: {message}', style='{', level=logging.WARNING)
 
     # Parse arguments.
     try:
@@ -51,10 +50,10 @@ def main():
             print(opt, usage)
             return 0
         elif opt in {'-d', '--debug'}:
-            if debug is logging.WARNING:
-                debug = logging.INFO
-            elif debug is logging.INFO:
-                debug = logging.DEBUG
+            if logging.getLogger().level is logging.WARNING:
+                logging.getLogger().setLevel(logging.INFO)
+            elif logging.getLogger().level is logging.INFO:
+                logging.getLogger().setLevel(logging.DEBUG)
         elif opt in {'-o'}:
             fout = arg
         elif opt in {'-n', '--threads'}:
