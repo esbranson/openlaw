@@ -5,11 +5,12 @@ scrape-statcode-us-co - convert the Colorado Revised Statutes into Akoma Ntoso
 
 Get the data from <https://leg.colorado.gov/colorado-revised-statutes>.
 
-Usage: scrape-statcode-us-co [options] zipfile dcl dtd
+Usage: scrape-statcode-us-co [options] zipfile dcl dtd xslt
 Arguments:
     zipfile     ZIP file containing the official CRS data
     dcl         SGML declaration
     dtd         SGML document type definition
+    xslt        XSL transform from CRS markup to Akoma Ntoso
     
     -t title    output specific titles (one flag for each)
     -o file     output file ('-' for stdout) (default: stdout)
@@ -25,7 +26,10 @@ import zipfile
 import tempfile
 import shutil
 import subprocess
-import bs4
+try:
+    from lxml import etree
+except:
+    import xml.etree.ElementTree as etree
 
 ##
 # Entry function: Parse paramters, call main function.
@@ -67,32 +71,33 @@ def main():
             logging.fatal('Invalid flag \"{}\". {}'.format(opt, usage))
             return 1
 
-    if len(args) < 3:
+    if len(args) < 4:
         logging.fatal('Need input files. {}'.format(usage))
         return 1
     zfn = os.path.abspath(args[0])
     dclfn = os.path.abspath(args[1])
     dtdfn = os.path.abspath(args[2])
+    xsltfn = os.path.abspath(args[3])
     
     # Do all titles if none specified.
     if len(titles) == 0:
         titles = all_titles
 
 	# Do it.
-    return do_it(zfn, dclfn, dtdfn, titles, fout, threads)
+    return do_it(zfn, dclfn, dtdfn, xsltfn, titles, fout, threads)
 
 ##
 # Do it.
 #
-def do_it(zfn, dclfn, dtdfn, titles, fout, threads): # Do it.
+def do_it(zfn, dclfn, dtdfn, xsltfn, titles, fout, threads): # Do it.
     with zipfile.ZipFile(zfn) as zf:
         for title in titles:
             # TODO: Convert each desired title in executors.
             logging.info('Converting title {}'.format(title))
-            with zf.open('TITLES/title' + title + '.txt') as sgml:
-                new_sgml = fix_sgml(sgml, dtdfn)
-                xml = convert_sgml2xml(new_sgml, dclfn)
-                akn = conv_xml2akn(xml)
+            with zf.open('TITLES/title' + title + '.txt') as sgmlf:
+                new_sgmlf = fix_sgml(sgmlf, dtdfn)
+                xmlf = convert_sgml2xml(new_sgmlf, dclfn)
+                akn = convert_xml2akn(xmlf, xsltfn)
 
 ##
 # Given an official CRS SGML file, return a fixed SGML file. We need to
@@ -101,31 +106,33 @@ def do_it(zfn, dclfn, dtdfn, titles, fout, threads): # Do it.
 # TODO: Run a diff against the file to fix various issues.
 # XXX: Mind the newlines on different architectures!?
 #
-def fix_sgml(sgml, dtdfn):
-    new_sgml = tempfile.NamedTemporaryFile()
-    new_sgml.write(('<!DOCTYPE CRS SYSTEM "' + dtdfn + "\">\n").encode())
-    shutil.copyfileobj(sgml, new_sgml)
-    return new_sgml
+def fix_sgml(sgmlf, dtdfn):
+    new_sgmlf = tempfile.NamedTemporaryFile()
+    new_sgmlf.write(('<!DOCTYPE CRS SYSTEM "' + dtdfn + "\">\n").encode())
+    shutil.copyfileobj(sgmlf, new_sgmlf)
+    return new_sgmlf
 
 ##
 # Convert a CRS SGML file file into XML.
 #
 # NOTE: Requires OpenSP.
 #
-def convert_sgml2xml(sgml, dclfn):
-    xml = tempfile.NamedTemporaryFile(mode='w+')
-    subprocess.run(["osx", dclfn, sgml.name], stdout=xml) # stderr=subprocess.DEVNULL
-    xml.seek(0)
-    return xml
+def convert_sgml2xml(sgmlf, dclfn):
+    xmlf = tempfile.NamedTemporaryFile(mode='w+')
+    subprocess.run(["osx", dclfn, sgmlf.name], stdout=xmlf) # stderr=subprocess.DEVNULL
+    xmlf.seek(0)
+    return xmlf
 
 ##
 # Convert a CRS SGML-as-XML file into Akoma Ntoso XML.
 #
 # XXX: TODO.
 #
-def conv_xml2akn(xml):
-    soup = bs4.BeautifulSoup(xml, features="lxml")
-    print(soup.prettify())
+def convert_xml2akn(xmlf, xsltfn):
+    xml = etree.parse(xmlf, etree.XMLParser(recover=True))
+    xslt = etree.XSLT(etree.parse(xsltfn))
+    akn = xslt(xml)
+    akn.write(sys.stdout.buffer, pretty_print=True)
 
 # <https://docs.python.org/3/library/__main__.html>
 if __name__ == "__main__":
