@@ -34,13 +34,16 @@ def main():
     titles = []
     fout = sys.stdout.buffer
     threads = 2
+    all_titles = list(str(n).zfill(2) for n in range(1,44))
+    all_titles.append("25.5")
+    all_titles.sort()
 
     # Configure logging.
     logging.basicConfig(format='{levelname} {process}/{threadName}: {message}', style='{', level=logging.WARNING)
 
     # Parse arguments.
     try:
-        opts, args = getopt.getopt(sys.argv[1:], 'o:n:p:dh')
+        opts, args = getopt.gnu_getopt(sys.argv[1:], 'o:n:t:dh')
     except getopt.GetoptError:
         logging.fatal('Getopt error. {}'.format(usage))
         return 1
@@ -59,7 +62,7 @@ def main():
         elif opt in {'-n', '--threads'}:
             threads = int(arg)
         elif opt in {'-t', '--title'}:
-            titles.append(arg.upper())
+            titles.append(arg.zfill(2))
         else:
             logging.fatal('Invalid flag \"{}\". {}'.format(opt, usage))
             return 1
@@ -71,7 +74,9 @@ def main():
     dclfn = os.path.abspath(args[1])
     dtdfn = os.path.abspath(args[2])
     
-    # Todo: Do all titles if none specified.
+    # Do all titles if none specified.
+    if len(titles) == 0:
+        titles = all_titles
 
 	# Do it.
     return do_it(zfn, dclfn, dtdfn, titles, fout, threads)
@@ -81,11 +86,13 @@ def main():
 #
 def do_it(zfn, dclfn, dtdfn, titles, fout, threads): # Do it.
     with zipfile.ZipFile(zfn) as zf:
-        # TODO: Convert each desired title in executors.
-        with zf.open("TITLES/title21.txt") as sgml:
-            new_sgml = fix_sgml(sgml, dtdfn)
-            xml = convert_sgml2xml(new_sgml, dclfn)
-            akn = conv_xml2akn(xml)
+        for title in titles:
+            # TODO: Convert each desired title in executors.
+            logging.info('Converting title {}'.format(title))
+            with zf.open('TITLES/title' + title + '.txt') as sgml:
+                new_sgml = fix_sgml(sgml, dtdfn)
+                xml = convert_sgml2xml(new_sgml, dclfn)
+                akn = conv_xml2akn(xml)
 
 ##
 # Given an official CRS SGML file, return a fixed SGML file. We need to
