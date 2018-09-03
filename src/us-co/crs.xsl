@@ -4,16 +4,15 @@
     xmlns="http://docs.oasis-open.org/legaldocml/ns/akn/3.0">
     <xsl:output method="xml" indent="yes"/>
 
-    <xsl:template match="/CRS">
+    <xsl:template match="/">
         <akomaNtoso>
             <act>
                 <preface>
-                    <xsl:apply-templates select="TITLE_NUM"/>
-                    <xsl:apply-templates select="TITLE_TEXT"/>
+                    <xsl:apply-templates select="CRS/TITLE_NUM"/>
+                    <xsl:apply-templates select="CRS/TITLE_TEXT"/>
                 </preface>
                 <body>
-                    <xsl:apply-templates select="ARTICLE_NUM"/>
-                    <!--<xsl:apply-templates select="SECTION_TEXT"/>-->
+                    <xsl:apply-templates select="CRS/ARTICLE_NUM"/>
                 </body>
             </act>
         </akomaNtoso>
@@ -27,22 +26,32 @@
         <docTitle><xsl:value-of select="normalize-space(text())"/></docTitle>
     </xsl:template>
 
-    <xsl:key name="prev" match="ARTICLE_NUM" use="count(preceding-sibling::ARTICLE_NUM)"/>
-
     <xsl:template match="ARTICLE_NUM">
         <article>
             <num><xsl:value-of select="normalize-space(text())"/></num>
-            <heading><xsl:value-of select="normalize-space(following-sibling::ARTICLE_TEXT)"/></heading>
-            <intro></intro>
+            <heading><xsl:value-of select="normalize-space(following-sibling::ARTICLE_TEXT[1])"/></heading>
             <xsl:apply-templates select="following-sibling::SECTION_TEXT[preceding-sibling::ARTICLE_NUM[1]=current()]"/>
         </article>
     </xsl:template>
 
     <xsl:template match="SECTION_TEXT">
         <section>
-            <num><xsl:value-of select="normalize-space(.//CATCH_LINE/RHFTO)"/></num>
-            <heading><xsl:value-of select="normalize-space(.//CATCH_LINE/RHFTO/following-sibling::M/following-sibling::text())"/></heading>
+            <num><xsl:value-of select="normalize-space(P/CATCH_LINE/RHFTO)"/></num>
+            <heading><xsl:value-of select="normalize-space(P/CATCH_LINE/RHFTO/following-sibling::M/following-sibling::text())"/></heading>
+            <xsl:apply-templates select="P"/>
         </section>
+    </xsl:template>
+
+    <xsl:template match="P">
+        <paragraph>
+            <num><xsl:value-of select="@N"/></num>
+            <content>
+                <xsl:for-each select="text()[normalize-space(.)]">
+                    <xsl:if test="position() > 1"><xsl:text> </xsl:text></xsl:if>
+                    <xsl:value-of select="normalize-space(.)"/>
+                </xsl:for-each>
+            </content>
+        </paragraph>
     </xsl:template>
 </xsl:stylesheet>
 
