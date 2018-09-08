@@ -45,13 +45,18 @@
     <xsl:template match="P">
         <paragraph>
             <num><xsl:value-of select="@N"/></num>
-            <content>
-                <xsl:for-each select="text()[normalize-space(.)]">
-                    <xsl:if test="position() > 1"><xsl:text> </xsl:text></xsl:if>
-                    <xsl:value-of select="normalize-space(.)"/>
-                </xsl:for-each>
-            </content>
+            <content><xsl:call-template name="paragraph-text"/></content>
         </paragraph>
     </xsl:template>
+
+    <xsl:template name="paragraph-text">
+        <xsl:for-each select="text()[normalize-space(.)]">
+            <xsl:if test="position() > 1">
+                <xsl:if test="position() > 2"><xsl:text> </xsl:text></xsl:if>
+                <xsl:value-of select="normalize-space(.)"/>
+            </xsl:if>
+        </xsl:for-each>
+    </xsl:template>
+
 </xsl:stylesheet>
 
