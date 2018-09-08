@@ -35,10 +35,23 @@
     </xsl:template>
 
     <xsl:template match="SECTION_TEXT">
+        <xsl:variable name="heading" select="normalize-space(P/CATCH_LINE/RHFTO/following-sibling::M/following-sibling::text())"/>
+        <xsl:variable name="isRemoved" select="' (Repealed)'=substring($heading, string-length($heading)-string-length(' (Repealed)')+1)"/>
+
         <section>
+            <xsl:if test="$isRemoved"><xsl:attribute name="status">removed</xsl:attribute></xsl:if>
             <num><xsl:value-of select="normalize-space(P/CATCH_LINE/RHFTO)"/></num>
-            <heading><xsl:value-of select="normalize-space(P/CATCH_LINE/RHFTO/following-sibling::M/following-sibling::text())"/></heading>
-            <xsl:apply-templates select="P"/>
+            <heading>
+                <xsl:choose>
+                    <xsl:when test="$isRemoved">
+                        <xsl:value-of select="substring($heading, 0, string-length($heading)-string-length(' (Repealed)')+1)"/>
+                    </xsl:when>
+                    <xsl:otherwise>
+                        <xsl:value-of select="$heading"/>
+                    </xsl:otherwise>
+                </xsl:choose>
+            </heading>
+            <xsl:if test="not($isRemoved)"><xsl:apply-templates select="P"/></xsl:if>
         </section>
     </xsl:template>
 
