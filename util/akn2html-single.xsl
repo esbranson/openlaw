@@ -11,60 +11,39 @@
 				<link rel="stylesheet" type="text/css" href="style.css"/>
 			</head>
 			<body>
-				<xsl:for-each select="akn:akomaNtoso/akn:act/akn:body/*[self::akn:hcontainer|self::akn:title|self::akn:part|self::akn:subpart|self::akn:article]">
-					<xsl:call-template name="hcontainer">
-						<xsl:with-param name="indent" select="0"/>
-					</xsl:call-template>
-				</xsl:for-each>
+				<xsl:apply-templates select="akn:akomaNtoso/akn:act/akn:body/*"/>
 			</body>
 		</html>
 	</xsl:template>
 
-	<!-- XXX need template for each type of Akoma Ntoso document? -->
-
-	<xsl:template name="hcontainer">
-		<xsl:param name="indent"/>
+	<xsl:template match="akn:hcontainer|akn:title|akn:part|akn:subpart|akn:article|akn:section">
 		<div>
 			<xsl:attribute name="class">
-				<xsl:choose>
-					<xsl:when test="contains(@status, 'repealed') or contains(@status, 'reserved')">
-						<xsl:value-of select="concat('indent-',$indent,' inactive')"/>
-					</xsl:when>
-					<xsl:otherwise>
-						<xsl:value-of select="concat('indent-',$indent)"/>
-					</xsl:otherwise>
-				</xsl:choose>
+				<xsl:value-of select="local-name()"/>
+				<xsl:if test="contains(@status, 'removed') or contains(@status, 'undefined')">
+					<xsl:text> inactive</xsl:text>
+				</xsl:if>
 			</xsl:attribute>
+
 			<xsl:if test="akn:num">
 				<xsl:value-of select="akn:num"/>
+			</xsl:if>
+			<xsl:if test="akn:num and akn:heading">
 				<xsl:text> — </xsl:text>
 			</xsl:if>
 			<xsl:if test="akn:heading">
 				<xsl:value-of select="akn:heading"/>
 			</xsl:if>
-			<!--<xsl:if test="contains(@status, 'repealed')">
+
+			<xsl:if test="contains(@status, 'removed')">
 				<xsl:text> [Repealed]</xsl:text>
 			</xsl:if>
-			<xsl:if test="contains(@status, 'reserved')">
+			<xsl:if test="contains(@status, 'undefined')">
 				<xsl:text> [Reserved]</xsl:text>
-			</xsl:if>-->
-			<xsl:choose>
-				<xsl:when test="contains(@status, 'repealed')">
-					<xsl:text> [Repealed]</xsl:text>
-				</xsl:when>
-				<xsl:when test="contains(@status, 'reserved')">
-					<xsl:text> [Reserved]</xsl:text>
-				</xsl:when>
-			</xsl:choose>
-		</div>
-		<br/>
-		<xsl:if test="not(contains(@status, 'repealed')) and not(contains(@status, 'reserved'))">
-			<xsl:for-each select="akn:hcontainer|akn:title|akn:part|akn:subpart|akn:article|akn:section">
-				<xsl:call-template name="hcontainer">
-					<xsl:with-param name="indent" select="$indent+1"/>
-				</xsl:call-template>
-			</xsl:for-each>
-		</xsl:if>
+			</xsl:if>
+        </div>
+
+		<xsl:apply-templates select="akn:hcontainer|akn:title|akn:part|akn:subpart|akn:article|akn:section"/>
 	</xsl:template>
 
 </xsl:stylesheet>
