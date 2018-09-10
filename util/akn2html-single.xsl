@@ -17,6 +17,9 @@
 	</xsl:template>
 
 	<xsl:template match="akn:hcontainer|akn:title|akn:part|akn:subpart|akn:article|akn:section">
+        <xsl:variable name="lowercase" select="'abcdefghijklmnopqrstuvwxyz'" />
+        <xsl:variable name="uppercase" select="'ABCDEFGHIJKLMNOPQRSTUVWXYZ'" />
+
 		<div>
 			<xsl:attribute name="class">
 				<xsl:value-of select="local-name()"/>
@@ -26,6 +29,8 @@
 			</xsl:attribute>
 
 			<xsl:if test="akn:num">
+                <xsl:value-of select="translate(local-name(), $lowercase, $uppercase)"/>
+                <xsl:text> </xsl:text>
 				<xsl:value-of select="akn:num"/>
 			</xsl:if>
 			<xsl:if test="akn:num and akn:heading">

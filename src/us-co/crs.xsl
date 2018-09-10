@@ -8,27 +8,23 @@
         <akomaNtoso>
             <act>
                 <preface>
-                    <xsl:apply-templates select="CRS/TITLE_NUM"/>
-                    <xsl:apply-templates select="CRS/TITLE_TEXT"/>
+                    <docNumber><xsl:value-of select="normalize-space(CRS/TITLE_NUM/text())"/></docNumber>
+                    <docTitle><xsl:value-of select="normalize-space(CRS/TITLE_TEXT/text())"/></docTitle>
                 </preface>
                 <body>
-                    <xsl:apply-templates select="CRS/ARTICLE_NUM"/>
+                    <title>
+                        <num><xsl:value-of select="substring(normalize-space(CRS/TITLE_NUM/text()), string-length('TITLE')+2)"/></num>
+                        <heading><xsl:value-of select="normalize-space(CRS/TITLE_TEXT/text())"/></heading>
+                        <xsl:apply-templates select="CRS/ARTICLE_NUM"/>
+                    </title>
                 </body>
             </act>
         </akomaNtoso>
     </xsl:template>
 
-    <xsl:template match="TITLE_NUM">
-        <docNumber><xsl:value-of select="normalize-space(text())"/></docNumber>
-    </xsl:template>
-
-    <xsl:template match="TITLE_TEXT">
-        <docTitle><xsl:value-of select="normalize-space(text())"/></docTitle>
-    </xsl:template>
-
     <xsl:template match="ARTICLE_NUM">
         <article>
-            <num><xsl:value-of select="normalize-space(text())"/></num>
+            <num><xsl:value-of select="substring(normalize-space(text()), string-length('ARTICLE')+2)"/></num>
             <heading><xsl:value-of select="normalize-space(following-sibling::ARTICLE_TEXT[1])"/></heading>
             <xsl:apply-templates select="following-sibling::SECTION_TEXT[preceding-sibling::ARTICLE_NUM[1]=current()]"/>
         </article>
@@ -39,15 +35,17 @@
         <xsl:variable name="isRemoved" select="' (Repealed)'=substring($heading, string-length($heading)-string-length(' (Repealed)')+1)"/>
 
         <section>
-            <xsl:if test="$isRemoved"><xsl:attribute name="status">removed</xsl:attribute></xsl:if>
+            <xsl:if test="$isRemoved">
+                <xsl:attribute name="status">removed</xsl:attribute>
+            </xsl:if>
             <num><xsl:value-of select="normalize-space(P/CATCH_LINE/RHFTO)"/></num>
             <heading>
                 <xsl:choose>
                     <xsl:when test="$isRemoved">
-                        <xsl:value-of select="substring($heading, 0, string-length($heading)-string-length(' (Repealed)')+1)"/>
+                        <xsl:value-of select="substring($heading, 0, string-length($heading)-string-length(' (Repealed)'))"/>
                     </xsl:when>
                     <xsl:otherwise>
-                        <xsl:value-of select="$heading"/>
+                        <xsl:value-of select="substring($heading, 0, string-length($heading))"/>
                     </xsl:otherwise>
                 </xsl:choose>
             </heading>
