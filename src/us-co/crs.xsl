@@ -49,15 +49,19 @@
                     </xsl:otherwise>
                 </xsl:choose>
             </heading>
-            <xsl:if test="not($isRemoved)"><xsl:apply-templates select="P"/></xsl:if>
+            <xsl:apply-templates select="P"/>
         </section>
     </xsl:template>
 
     <xsl:template match="P">
-        <paragraph>
-            <num><xsl:value-of select="@N"/></num>
-            <content><xsl:call-template name="paragraph-text"/></content>
-        </paragraph>
+        <xsl:variable name="text"><xsl:call-template name="paragraph-text"/></xsl:variable>
+
+        <xsl:if test="string-length($text)">
+            <paragraph>
+                <num><xsl:value-of select="@N"/></num>
+                <content><xsl:value-of select="$text"/></content>
+            </paragraph>
+        </xsl:if>
     </xsl:template>
 
     <xsl:template name="paragraph-text">
