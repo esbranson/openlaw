@@ -19,9 +19,10 @@ import getopt
 import logging
 import re
 try: import lxml.etree as etree
-except ImportError: import xml.etree.ElementTree as etree
+except ImportError: import xml.etree.ElementTree as etree # XXX lxml required
 
-xmlns = "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/WD17"
+xmlns = "http://docs.oasis-open.org/legaldocml/ns/akn/3.0"
+uslm_ns = "http://schemas.gpo.gov/xml/uslm"
 
 ##
 # Entry function. Parse parameters, call main function.
@@ -34,6 +35,7 @@ def main():
 	do_content = True
 	do_notes = False
 	loglvl = logging.WARN
+	logging.basicConfig(format='{levelname:8s}: {message}', style='{', level=loglvl)
 	try:
 		opts, args = getopt.getopt(sys.argv[1:], 'trncash')
 	except getopt.GetoptError as e:
@@ -56,7 +58,6 @@ def main():
 		elif opt in {'-h', '--help'}:
 			print(usage)
 			sys.exit(1)
-	logging.basicConfig(format='{levelname:8s}: {message}', style='{', level=loglvl)
 	if len(args) < 1:
 		args = ['-']
 	try:
@@ -66,15 +67,47 @@ def main():
 			else:
 				f = open(fn)
 			with f as f:
-				tree = etree.parse(f)
-			do_it(tree, do_repealed, do_abbr, do_number, do_heading, do_content, do_notes)
+				tree = etree.parse(f) # throws ParseError
+			if tree.getroot().nsmap[None] == xmlns:
+				parse_akoma_ntoso(tree, do_repealed, do_abbr, do_number, do_heading, do_content, do_notes)
+			elif tree.getroot().nsmap[None] ==  uslm_ns:
+				parse_uslm(tree, do_repealed, do_abbr, do_number, do_heading, do_content, do_notes)
 	except (BrokenPipeError,KeyboardInterrupt):
 		pass
 
 ##
+# Parse a USLM file.
+#
+def parse_uslm(tree, do_repealed, do_abbr, do_number, do_heading, do_content, do_notes):
+	ns={'uslm': uslm_ns}
+	path = '//uslm:section'
+	contentre = './/{' + uslm_ns + '}content'
+	trans = str.maketrans('“”’\t', '""\' ', '\n')
+
+	sections = tree.xpath(path, namespaces=ns)
+
+	for section in sections:
+		abbr = ''
+		enum = ''
+		heading = ''
+		content = ''
+		if do_abbr:
+			# Find highest parent with an identifier.
+			#abbr = ' '.join(root.tag, root.find('.//{' + uslm_ns + '}num'))
+			pass
+		if do_number:
+			pass
+		if do_heading:
+			pass
+		if do_content:
+			els = section.iterfind(contentre)
+			content = ' '.join(''.join(el.xpath('.//text()')).translate(trans).strip() for el in els)
+		print(abbr + enum + heading + content)
+
+##
 # TODO
 #
-def do_it(tree, do_repealed, do_abbr, do_number, do_heading, do_content, do_notes):
+def parse_akoma_ntoso(tree, do_repealed, do_abbr, do_number, do_heading, do_content, do_notes):
 	numre = '{' + xmlns + '}num'
 	headingre = '{' + xmlns + '}heading'
 	contentre = './/{' + xmlns + '}content/*'
