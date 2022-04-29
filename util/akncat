@@ -24,17 +24,18 @@ except ImportError: import xml.etree.ElementTree as etree # XXX lxml required
 xmlns = "http://docs.oasis-open.org/legaldocml/ns/akn/3.0"
 uslm_ns = "http://schemas.gpo.gov/xml/uslm"
 
+do_repealed = False
+do_abbr = True
+do_number = True
+do_heading = True
+do_content = True
+do_notes = False
+loglvl = logging.DEBUG
+
 ##
 # Entry function. Parse parameters, call main function.
 #
 def main():
-	do_repealed = False
-	do_abbr = True
-	do_number = True
-	do_heading = True
-	do_content = True
-	do_notes = False
-	loglvl = logging.WARN
 	logging.basicConfig(format='{levelname:8s}: {message}', style='{', level=loglvl)
 	try:
 		opts, args = getopt.getopt(sys.argv[1:], 'trncash')
@@ -68,25 +69,22 @@ def main():
 				f = open(fn)
 			with f as f:
 				tree = etree.parse(f) # throws ParseError
-			if tree.getroot().nsmap[None] == xmlns:
-				parse_akoma_ntoso(tree, do_repealed, do_abbr, do_number, do_heading, do_content, do_notes)
-			elif tree.getroot().nsmap[None] ==  uslm_ns:
-				parse_uslm(tree, do_repealed, do_abbr, do_number, do_heading, do_content, do_notes)
+			if tree.getroot().nsmap[None] == xmlns: # XXX lxml required
+				parse_akoma_ntoso(tree)
+			elif tree.getroot().nsmap[None] ==  uslm_ns: # XXX lxml required
+				parse_uslm(tree)
 	except (BrokenPipeError,KeyboardInterrupt):
 		pass
 
 ##
 # Parse a USLM file.
 #
-def parse_uslm(tree, do_repealed, do_abbr, do_number, do_heading, do_content, do_notes):
-	ns={'uslm': uslm_ns}
-	path = '//uslm:section'
-	contentre = './/{' + uslm_ns + '}content'
-	trans = str.maketrans('“”’\t', '""\' ', '\n')
+def parse_uslm(tree):
+	ns = {'uslm': uslm_ns}
+	section_path = '//uslm:section'
+	content_path = './/{' + uslm_ns + '}content'
 
-	sections = tree.xpath(path, namespaces=ns)
-
-	for section in sections:
+	for section in tree.xpath(section_path, namespaces=ns):
 		abbr = ''
 		enum = ''
 		heading = ''
@@ -100,14 +98,13 @@ def parse_uslm(tree, do_repealed, do_abbr, do_number, do_heading, do_content, do
 		if do_heading:
 			pass
 		if do_content:
-			els = section.iterfind(contentre)
-			content = ' '.join(''.join(el.xpath('.//text()')).translate(trans).strip() for el in els)
+			content = ' '.join(etree.tostring(el, encoding='unicode', method='text').strip() for el in section.iterfind(content_path))
 		print(abbr + enum + heading + content)
 
 ##
 # TODO
 #
-def parse_akoma_ntoso(tree, do_repealed, do_abbr, do_number, do_heading, do_content, do_notes):
+def parse_akoma_ntoso(tree):
 	numre = '{' + xmlns + '}num'
 	headingre = '{' + xmlns + '}heading'
 	contentre = './/{' + xmlns + '}content/*'
