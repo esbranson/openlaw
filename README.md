@@ -27,7 +27,6 @@ The legal dataset conversions are experimental, and should not be considered a f
 
 The current legal datasets have conversions to Akoma Ntoso:
 
-* ~~United States Code~~
-* California codified statutes
-* Colorado Revised Statutes
-
+* ~~United States Code~~: Cornell LII LexCraft was superseded by USLM, previous codebase was largely abandoned.
+* ~~California codified statutes~~: Out of date?
+* ~~Colorado Revised Statutes~~: Out of date?
