@@ -16,14 +16,14 @@ With no FILE, or when FILE is -, read standard input.
 
 Examples:
   curl -fL --no-progress-meter \\
-    "https://www.govinfo.gov/link/bills/117/hr/1319?billversion=mostrecent&link-type=uslm" | \\
+    'https://www.govinfo.gov/link/bills/117/hr/1319?billversion=mostrecent&link-type=uslm' | \\
     akncat -anc
 
-  curl -f --no-progress-meter \\
-    https://www.govinfo.gov/content/pkg/PLAW-117publ2/uslm/PLAW-117publ2.xml | \\
+  curl -fL --no-progress-meter \\
+    'https://www.govinfo.gov/link/plaw/117/public/2?link-type=uslm' | \\
     akncat -anc
 
-  curl -f --no-progress-meter \\
+  curl -fL --no-progress-meter \\
     https://www.govinfo.gov/content/pkg/COMPS-16472/uslm/COMPS-16472.xml | \\
     akncat -anc
 """
