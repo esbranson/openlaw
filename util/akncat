@@ -97,8 +97,10 @@ def parse_uslm(tree):
 		for bad in tree.xpath("//*[self::uslm:content or self::uslm:chapeau or self::uslm:subsection or self::uslm:paragraph or self::uslm:continuation]", namespaces=ns):
 			remove_node(bad)
 	if not do_notes:
-		for bad in tree.xpath("//*[self::uslm:editorialNote or self::uslm:footnote or self::uslm:sourceCredit]", namespaces=ns):
+		for bad in tree.xpath("//*[self::uslm:editorialNote or self::uslm:footnote or self::uslm:sourceCredit or self::uslm:sidenote]", namespaces=ns):
 			remove_node(bad)
+	for bad in tree.xpath("//*[self::uslm:elided]", namespaces=ns):
+		remove_node(bad)
 
 	for section in tree.xpath('//uslm:section', namespaces=ns):
 		if do_abbr:
@@ -114,9 +116,8 @@ def parse_uslm(tree):
 				remove_node(bad)
 		print(' '.join((etree.tostring(section, encoding='unicode', method='text')).split()))
 
-# XXX Don't remove trailing text()!
+# XXX Don't remove tail text!
 def remove_node(element):
-	tail = element.tail
 	element.getparent().remove(element)
 
 def get_id(element):
