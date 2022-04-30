@@ -4,6 +4,8 @@
 usage="""Usage: akncat [OPTION]... [FILE]...
 Concatenate Akoma Ntoso FILE(s) sections to standard output.
 
+With no FILE, or when FILE is -, read standard input.
+
   -a, --abbr         toggle output of document abbreviation (default: yes)
   -n, --nums         toggle output of section numbers (default: yes)
   -t, --headings     toggle output of title/heading/subheading (default: yes)
@@ -12,7 +14,19 @@ Concatenate Akoma Ntoso FILE(s) sections to standard output.
   -s, --status       toggle output of sections with statusType "removed" (default: no)
   -h, --help         display this help and exit
 
-With no FILE, or when FILE is -, read standard input."""
+Examples:
+  curl -fL --no-progress-meter \\
+    "https://www.govinfo.gov/link/bills/117/hr/1319?billversion=mostrecent&link-type=uslm" | \\
+    akncat -anc
+
+  curl -f --no-progress-meter \\
+    https://www.govinfo.gov/content/pkg/PLAW-117publ2/uslm/PLAW-117publ2.xml | \\
+    akncat -anc
+
+  curl -f --no-progress-meter \\
+    https://www.govinfo.gov/content/pkg/COMPS-16472/uslm/COMPS-16472.xml | \\
+    akncat -anc
+"""
 
 import sys
 import getopt
