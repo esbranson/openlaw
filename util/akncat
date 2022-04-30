@@ -97,7 +97,7 @@ def parse_uslm(tree):
 		for bad in tree.xpath("//*[self::uslm:content or self::uslm:chapeau or self::uslm:subsection or self::uslm:paragraph or self::uslm:continuation]", namespaces=ns):
 			remove_node(bad)
 	if not do_notes:
-		for bad in tree.xpath("//*[self::uslm:editorialNote or self::uslm:footnote]", namespaces=ns):
+		for bad in tree.xpath("//*[self::uslm:editorialNote or self::uslm:footnote or self::uslm:sourceCredit]", namespaces=ns):
 			remove_node(bad)
 
 	for section in tree.xpath('//uslm:section', namespaces=ns):
