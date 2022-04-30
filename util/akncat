@@ -17,15 +17,18 @@ With no FILE, or when FILE is -, read standard input."""
 import sys
 import getopt
 import logging
+import os
 import re
+# XXX lxml is required!
 try: import lxml.etree as etree
-except ImportError: import xml.etree.ElementTree as etree # XXX lxml required
+except ImportError: import xml.etree.ElementTree as etree
 
 xmlns = "http://docs.oasis-open.org/legaldocml/ns/akn/3.0"
 uslm_ns = "http://schemas.gpo.gov/xml/uslm"
+ns = {'uslm': uslm_ns}
 
 do_repealed = False
-do_abbr = True
+do_abbr = False
 do_number = True
 do_heading = True
 do_content = True
@@ -33,14 +36,20 @@ do_notes = False
 loglvl = logging.DEBUG
 
 ##
-# Entry function. Parse parameters, call main function.
+# Entry function. Parse parameters, call cat_file().
 #
 def main():
+	global do_repealed
+	global do_abbr
+	global do_number
+	global do_heading
+	global do_content
+	global do_notes
 	logging.basicConfig(format='{levelname:8s}: {message}', style='{', level=loglvl)
 	try:
 		opts, args = getopt.getopt(sys.argv[1:], 'trncash')
 	except getopt.GetoptError as e:
-		logging.fatal('getopt error: {}'.format(e))
+		logging.fatal(f'getopt error: {e}')
 		print(usage)
 		sys.exit(2)
 	for opt, arg in opts:
@@ -60,46 +69,61 @@ def main():
 			print(usage)
 			sys.exit(1)
 	if len(args) < 1:
-		args = ['-']
+		cat_file(sys.stdin)
+	else:
+		for arg in args:
+			cat_file(arg)
+	os.close(sys.stdout.fileno())
+
+def cat_file(path):
 	try:
-		for fn in args:
-			if fn == '-':
-				f = sys.stdin
-			else:
-				f = open(fn)
-			with f as f:
-				tree = etree.parse(f) # throws ParseError
-			if tree.getroot().nsmap[None] == xmlns: # XXX lxml required
-				parse_akoma_ntoso(tree)
-			elif tree.getroot().nsmap[None] ==  uslm_ns: # XXX lxml required
-				parse_uslm(tree)
+		tree = etree.parse(path)
+		if tree.getroot().nsmap[None] == xmlns:
+			parse_akoma_ntoso(tree)
+		elif tree.getroot().nsmap[None] ==  uslm_ns:
+			parse_uslm(tree)
 	except (BrokenPipeError,KeyboardInterrupt):
 		pass
+	except etree.ParseError:
+		logging.info(f"Failed to parse {path}")
 
 ##
-# Parse a USLM file.
+# Parse a USLM ElementTree.
+#
+# TODO What is the algorithm here?
 #
 def parse_uslm(tree):
-	ns = {'uslm': uslm_ns}
-	section_path = '//uslm:section'
-	content_path = './/{' + uslm_ns + '}content'
+	if not do_content:
+		for bad in tree.xpath("//*[self::uslm:content or self::uslm:chapeau or self::uslm:subsection or self::uslm:paragraph or self::uslm:continuation]", namespaces=ns):
+			remove_node(bad)
+	if not do_notes:
+		for bad in tree.xpath("//*[self::uslm:editorialNote or self::uslm:footnote]", namespaces=ns):
+			remove_node(bad)
 
-	for section in tree.xpath(section_path, namespaces=ns):
-		abbr = ''
-		enum = ''
-		heading = ''
-		content = ''
+	for section in tree.xpath('//uslm:section', namespaces=ns):
 		if do_abbr:
-			# Find highest parent with an identifier.
-			#abbr = ' '.join(root.tag, root.find('.//{' + uslm_ns + '}num'))
-			pass
-		if do_number:
-			pass
-		if do_heading:
-			pass
-		if do_content:
-			content = ' '.join(etree.tostring(el, encoding='unicode', method='text').strip() for el in section.iterfind(content_path))
-		print(abbr + enum + heading + content)
+			ident = get_id(section)
+			if ident:
+				section.text = ident + ' ' + (section.text or '') # TODO Should we be editing the in-memory representation?
+		if not do_number:
+			# TODO Should we normalize or remove descendant <num> tags?
+			for bad in section.xpath("./uslm:num", namespaces=ns):
+				remove_node(bad)
+		if not do_heading:
+			for bad in section.xpath("./uslm:heading", namespaces=ns):
+				remove_node(bad)
+		print(' '.join((etree.tostring(section, encoding='unicode', method='text')).split()))
+
+# XXX Don't remove trailing text()!
+def remove_node(element):
+	tail = element.tail
+	element.getparent().remove(element)
+
+def get_id(element):
+	while element is not None:
+		if "identifier" in element.attrib:
+			return element.attrib["identifier"]
+		element = element.getparent()
 
 ##
 # TODO
