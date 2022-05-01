@@ -116,20 +116,18 @@ def cat_file(path):
 # TODO Should we be editing the in-memory representation?
 #
 def parse_uslm(tree):
-	if not do_content:
-		for bad in tree.xpath("//*[self::uslm:content or self::uslm:chapeau or self::uslm:subsection or self::uslm:paragraph or self::uslm:continuation]", namespaces=ns):
-			remove_node(bad)
-	if not do_notes:
-		for bad in tree.xpath("//*[self::uslm:editorialNote or self::uslm:footnote or self::uslm:sourceCredit or self::uslm:sidenote]", namespaces=ns):
-			remove_node(bad)
 	for bad in tree.xpath("//*[self::uslm:elided]", namespaces=ns):
 		remove_node(bad)
 
 	for section in tree.xpath('//uslm:section', namespaces=ns):
 		if do_abbr:
+			# XXX We can't delete editorialNote[@role='uscRef'] until after this!
 			ident = get_id(section)
 			if ident:
 				section.text = ident + ' ' + (section.text or '')
+		if not do_notes:
+			for bad in section.xpath(".//*[self::uslm:editorialNote or self::uslm:footnote or self::uslm:sourceCredit or self::uslm:sidenote]", namespaces=ns):
+				remove_node(bad)
 		if not do_number:
 			# TODO Should we normalize or remove descendant <num> tags?
 			for bad in section.xpath("./uslm:num", namespaces=ns):
@@ -137,14 +135,25 @@ def parse_uslm(tree):
 		if not do_heading:
 			for bad in section.xpath("./uslm:heading", namespaces=ns):
 				remove_node(bad)
+		if not do_content:
+			for bad in section.xpath(".//*[self::uslm:content or self::uslm:chapeau or self::uslm:subsection or self::uslm:paragraph or self::uslm:continuation]", namespaces=ns):
+				remove_node(bad)
 		print(' '.join((etree.tostring(section, encoding='unicode', method='text')).split()))
 
 # XXX Don't remove tail text!
 def remove_node(element):
 	element.getparent().remove(element)
 
+##
+# Get the identifier for an element.
+#
+# From the element or its nearest ancestor, prefer its USC identifier
+# over its normal identifier.
+#
 def get_id(element):
 	while element is not None:
+		for ref in element.xpath("./uslm:editorialNote[@role='uscRef']/uslm:ref/@href", namespaces=ns):
+			return ref
 		if "identifier" in element.attrib:
 			return element.attrib["identifier"]
 		element = element.getparent()
