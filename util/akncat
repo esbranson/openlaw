@@ -12,6 +12,7 @@ With no FILE, or when FILE is -, read standard input.
   -c, --content      toggle output of section content (default: yes)
   -r, --refs         toggle output of section references (default: no)
   -s, --status       toggle output of sections with statusType "removed" (default: no)
+  -v, --verbose      increase verbosity
   -h, --help         display this help and exit
 
 Examples:
@@ -47,7 +48,6 @@ do_number = True
 do_heading = True
 do_content = True
 do_notes = False
-loglvl = logging.DEBUG
 
 ##
 # Entry function. Parse parameters, call cat_file().
@@ -59,9 +59,10 @@ def main():
 	global do_heading
 	global do_content
 	global do_notes
-	logging.basicConfig(format='{levelname:8s}: {message}', style='{', level=loglvl)
+	debug = logging.WARN
+	logging.basicConfig(format='akncat: {message}', style='{', level=debug)
 	try:
-		opts, args = getopt.getopt(sys.argv[1:], 'trncash')
+		opts, args = getopt.getopt(sys.argv[1:], 'trncashv')
 	except getopt.GetoptError as e:
 		logging.fatal(f'getopt error: {e}')
 		print(usage)
@@ -79,6 +80,9 @@ def main():
 			do_abbr = not do_abbr
 		elif opt in {'-s', '--status'}:
 			do_repealed = not do_repealed
+		elif opt in {'-v', '--verbose'}:
+			debug -= 10
+			logging.getLogger().setLevel(debug)
 		elif opt in {'-h', '--help'}:
 			print(usage)
 			sys.exit(1)
@@ -90,6 +94,8 @@ def main():
 	os.close(sys.stdout.fileno())
 
 def cat_file(path):
+	if path == '-':
+		path = sys.stdin
 	try:
 		tree = etree.parse(path)
 		if tree.getroot().nsmap[None] == xmlns:
@@ -99,12 +105,15 @@ def cat_file(path):
 	except (BrokenPipeError,KeyboardInterrupt):
 		pass
 	except etree.ParseError:
+		if path is sys.stdin:
+			path = '-'
 		logging.info(f"Failed to parse {path}")
 
 ##
 # Parse a USLM ElementTree.
 #
 # TODO What is the algorithm here?
+# TODO Should we be editing the in-memory representation?
 #
 def parse_uslm(tree):
 	if not do_content:
@@ -120,7 +129,7 @@ def parse_uslm(tree):
 		if do_abbr:
 			ident = get_id(section)
 			if ident:
-				section.text = ident + ' ' + (section.text or '') # TODO Should we be editing the in-memory representation?
+				section.text = ident + ' ' + (section.text or '')
 		if not do_number:
 			# TODO Should we normalize or remove descendant <num> tags?
 			for bad in section.xpath("./uslm:num", namespaces=ns):
