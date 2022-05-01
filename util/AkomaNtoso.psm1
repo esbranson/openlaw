@@ -3,7 +3,7 @@
   Output Akoma Ntoso sections.
 
  .Description
-  Output Akoma Ntoso sections as PSCustomObjects.
+  Output Akoma Ntoso sections as PSCustomObject[].
 
  .Parameter Document
   The XmlDocument to parse.
@@ -72,5 +72,5 @@ Process {
     }
 }
 }
-Update-TypeData -TypeName "AknSection" -DefaultDisplayPropertySet "CookedId","Num"
+Update-TypeData -TypeName "AknSection" -DefaultDisplayPropertySet "Num","Content" -DefaultKeyPropertySet "Num"
 Export-ModuleMember -Function Format-Akn
