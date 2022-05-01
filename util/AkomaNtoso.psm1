@@ -25,6 +25,28 @@ Param(
     [Parameter(ValueFromPipeline)]$Document
     )
 
+Process {
+    #if ($null -eq $Document) {return} # TODO Not needed if sanity checks all handle nullable variables and the default is return.
+    if ($Document -is [xml]) {} # TODO Check that it's Akoma Ntoso.
+    elseif ($Document -is [string]) {try {$Document=[xml](Get-Content $Document);} catch {return;}}
+    elseif ($Document -is [object[]]) {return ($Document|Format-Akn)}
+    else {return}
+
+    $nsmgr = New-Object -TypeName System.Xml.XmlNamespaceManager -ArgumentList $Document.NameTable
+    $nsmgr.AddNamespace("uslm", "http://schemas.gpo.gov/xml/uslm");
+    $Document.DocumentElement.SelectNodes($xPathSection, $nsmgr).forEach{
+        # TODO Should we sanity check $_ type?
+        [PSCustomObject]@{
+            PSTypeName="AknSection";
+            CookedId=Get-AknId $_ $nsmgr;
+            UscId=Get-XmlAttributeValue $_.SelectSingleNode($xPathUSCIdentifierAttr, $nsmgr);
+            Id=Get-XmlAttributeValue $_.Attributes["identifier"];
+            Num=Get-XmlAttributeValue $_.SelectSingleNode($xPathNumAttr, $nsmgr);
+            Content=[string]::Join(' ', (Get-XmlText $_));
+        }
+    }
+}
+
 Begin {
     $xPathSection = "//uslm:section[not(ancestor::uslm:quotedContent)]"
     $xPathUSCIdentifierAttr = "./uslm:editorialNote[@role='uscRef']/uslm:ref/@href"
@@ -47,27 +69,6 @@ Begin {
             if ($child.NodeType -eq [System.Xml.XmlNodeType]::Element) { # TODO Filter unwanted tags here?
                 Get-XmlText $child
             }
-        }
-    }
-}
-Process {
-    #if ($null -eq $Document) {return} # TODO Not needed if sanity checks all handle nullable variables and the default is return.
-    if ($Document -is [xml]) {} # TODO Check that it's Akoma Ntoso.
-    elseif ($Document -is [string]) {try {$Document=[xml](Get-Content $Document);} catch {return;}}
-    elseif ($Document -is [object[]]) {return ($Document|Format-Akn)}
-    else {return}
-
-    $nsmgr = New-Object -TypeName System.Xml.XmlNamespaceManager -ArgumentList $Document.NameTable
-    $nsmgr.AddNamespace("uslm", "http://schemas.gpo.gov/xml/uslm");
-    $Document.DocumentElement.SelectNodes($xPathSection, $nsmgr).forEach{
-        # TODO Should we sanity check $_ type?
-        [PSCustomObject]@{
-            PSTypeName="AknSection";
-            CookedId=Get-AknId $_ $nsmgr;
-            UscId=Get-XmlAttributeValue $_.SelectSingleNode($xPathUSCIdentifierAttr, $nsmgr);
-            Id=Get-XmlAttributeValue $_.Attributes["identifier"];
-            Num=Get-XmlAttributeValue $_.SelectSingleNode($xPathNumAttr, $nsmgr);
-            Content=[string]::Join(' ', (Get-XmlText $_));
         }
     }
 }
