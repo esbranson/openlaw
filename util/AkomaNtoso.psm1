@@ -36,13 +36,17 @@ function Format-Akn {
         $nsmgr.AddNamespace("uslm", "http://schemas.gpo.gov/xml/uslm");
         $Document.DocumentElement.SelectNodes($xPathSection, $nsmgr).forEach{
             # TODO Should we sanity check $_ type?
+            $num = Get-XmlAttributeValue $_.SelectSingleNode($xPathNumAttr, $nsmgr)
+            $heading = Get-XmlInnerText $_.SelectSingleNode($xPathHeading, $nsmgr)
+            $_.SelectNodes($xPathRemoveAll, $nsmgr).ForEach{$_.ParentNode.RemoveChild($_)>$null} # TODO This leaves errant spaces.
             [PSCustomObject]@{
                 PSTypeName = "AknSection";
                 CookedId   = Get-AknId $_ $nsmgr;
                 UscId      = Get-XmlAttributeValue $_.SelectSingleNode($xPathUSCIdentifierAttr, $nsmgr);
                 Id         = Get-XmlAttributeValue $_.Attributes["identifier"];
-                Num        = Get-XmlAttributeValue $_.SelectSingleNode($xPathNumAttr, $nsmgr);
-                Content    = [string]::Join(' ', (Get-XmlText $_));
+                Num        = $num;
+                Heading    = $heading;
+                Content    = Get-XmlInnerText $_.SelectSingleNode($xPathSelf, $nsmgr);
             }
         }
     }
@@ -51,7 +55,11 @@ function Format-Akn {
         $xPathSection = "//uslm:section[not(ancestor::uslm:quotedContent)]"
         $xPathUSCIdentifierAttr = "./uslm:editorialNote[@role='uscRef']/uslm:ref/@href"
         $xPathNumAttr = "./uslm:num/@value"
-        function Get-XmlAttributeValue($obj) { if ($obj -is [System.Xml.XmlAttribute]) { $obj.Value } }
+        $xPathHeading = "./uslm:heading"
+        $xPathSelf = "."
+        $xPathRemoveAll = "./uslm:num|./uslm:heading|.//uslm:editorialNote[@role='uscRef']|.//*[self::uslm:footnote or self::uslm:sourceCredit or self::uslm:sidenote or self::uslm:page]"
+        function Get-XmlAttributeValue([System.Xml.XmlAttribute]$obj) {if ($obj) {$obj.Value}}
+        function Get-XmlInnerText([System.Xml.XmlNode]$obj) {if ($obj) {$obj.InnerText}}
         function Get-AknId([System.Xml.XmlElement]$Element, [System.Xml.XmlNamespaceManager]$nsmgr) {
             while ($Element) {
                 $UscId = $Element.SelectSingleNode($xPathUSCIdentifierAttr, $nsmgr)
@@ -61,17 +69,7 @@ function Format-Akn {
                 $Element = $Element.ParentNode
             }
         }
-        function Get-XmlText([System.Xml.XmlNode]$Node, [int]$allownum = 0) {
-            foreach ($child in $Node.ChildNodes) {
-                if ($child.NodeType -eq [System.Xml.XmlNodeType]::Text -or $child.NodeType -eq [System.Xml.XmlNodeType]::CDATA) {
-                    $child.Value.Trim()
-                }
-                if ($child.NodeType -eq [System.Xml.XmlNodeType]::Element -and $child.Name -notin @('editorialNote') -and ($allownum -or $child.Name -notin @('num'))) {
-                    Get-XmlText $child -allownum 1
-                }
-            }
-        }
     }
 }
-Update-TypeData -TypeName "AknSection" -DefaultDisplayPropertySet "Num", "Content" -DefaultKeyPropertySet "Num"
+Update-TypeData -TypeName "AknSection" -DefaultDisplayPropertySet "Num", "Heading" -DefaultKeyPropertySet "Num"
 Export-ModuleMember -Function Format-Akn
