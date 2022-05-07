@@ -1,9 +1,9 @@
 <#
  .Synopsis
-  Output Akoma Ntoso sections.
+  Import USLM.
 
  .Description
-  Output Akoma Ntoso sections as PSCustomObject[].
+  Import USLM sections from an XmlDocument as PSCustomObject[].
 
  .Parameter Document
   The XmlDocument to parse.
@@ -13,13 +13,13 @@
    $billUrl = 'https://www.govinfo.gov/link/bills/117/hr/1319?link-type=uslm'
    $actUrl = 'https://www.govinfo.gov/link/plaw/117/public/2?link-type=uslm'
    $compsUrl = 'https://www.govinfo.gov/content/pkg/COMPS-16472/uslm/COMPS-16472.xml'
-   $bill = irm $billUrl | Format-Akn
-   $act = irm $actUrl | Format-Akn
-   $comps = irm $compsUrl | Format-Akn
+   $bill = irm $billUrl | Import-Uslm
+   $act = irm $actUrl | Import-Uslm
+   $comps = irm $compsUrl | Import-Uslm
    Compare-Object $bill.Num $act.Num
    Compare-Object $act.Num $comps.Num
 #>
-function Format-Akn {
+function Import-Uslm {
     [CmdletBinding()]
     Param(
         [Parameter(ValueFromPipeline)]$Document
@@ -29,7 +29,7 @@ function Format-Akn {
         #if ($null -eq $Document) {return} # TODO Not needed if sanity checks all handle nullable variables and the default is return.
         if ($Document -is [xml]) {} # TODO Check that it's Akoma Ntoso.
         elseif ($Document -is [string]) { try { $Document = [xml](Get-Content $Document) } catch { return } }
-        elseif ($Document -is [object[]]) { return ($Document | Format-Akn) }
+        elseif ($Document -is [object[]]) { return ($Document | Import-Uslm) }
         else { return }
 
         $nsmgr = New-Object -TypeName System.Xml.XmlNamespaceManager -ArgumentList $Document.NameTable
@@ -38,7 +38,7 @@ function Format-Akn {
             # TODO Should we sanity check $_ type?
             $num = Get-XmlAttributeValue $_.SelectSingleNode($xPathNumAttr, $nsmgr)
             $heading = Get-XmlInnerText $_.SelectSingleNode($xPathHeading, $nsmgr)
-            $_.SelectNodes($xPathRemoveAll, $nsmgr).ForEach{$_.ParentNode.RemoveChild($_)>$null} # TODO This leaves errant spaces.
+            $_.SelectNodes($xPathRemoveAll, $nsmgr).ForEach{ $_.ParentNode.RemoveChild($_)>$null } # TODO This leaves errant spaces.
             [PSCustomObject]@{
                 PSTypeName = "AknSection";
                 CookedId   = Get-AknId $_ $nsmgr;
@@ -58,8 +58,8 @@ function Format-Akn {
         $xPathHeading = "./uslm:heading"
         $xPathSelf = "."
         $xPathRemoveAll = "./uslm:num|./uslm:heading|.//uslm:editorialNote[@role='uscRef']|.//*[self::uslm:footnote or self::uslm:sourceCredit or self::uslm:sidenote or self::uslm:page]"
-        function Get-XmlAttributeValue([System.Xml.XmlAttribute]$obj) {if ($obj) {$obj.Value}}
-        function Get-XmlInnerText([System.Xml.XmlNode]$obj) {if ($obj) {$obj.InnerText}}
+        function Get-XmlAttributeValue([System.Xml.XmlAttribute]$obj) { if ($obj) { $obj.Value } }
+        function Get-XmlInnerText([System.Xml.XmlNode]$obj) { if ($obj) { $obj.InnerText } }
         function Get-AknId([System.Xml.XmlElement]$Element, [System.Xml.XmlNamespaceManager]$nsmgr) {
             while ($Element) {
                 $UscId = $Element.SelectSingleNode($xPathUSCIdentifierAttr, $nsmgr)
