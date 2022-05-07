@@ -71,5 +71,62 @@ function Import-Uslm {
         }
     }
 }
-Update-TypeData -TypeName "AknSection" -DefaultDisplayPropertySet "Num", "Heading" -DefaultKeyPropertySet "Num"
-Export-ModuleMember -Function Format-Akn
+Update-TypeData -TypeName "AknSection" -DefaultDisplayPropertySet "Num", "Heading" -DefaultKeyPropertySet "Num" -ErrorAction SilentlyContinue
+Export-ModuleMember -Function Import-Uslm
+
+<#
+ .Synopsis
+  Import Akoma Ntoso.
+
+ .Description
+  Import Akoma Ntoso sections from an XmlDocument as PSCustomObject[].
+
+ .Parameter Document
+  The XmlDocument to parse.
+
+ .Example
+   Import-Module './AkomaNtoso.psm1'
+   $actUrl = 'https://www.legislation.gov.uk/ukpga/1982/11/data.akn'
+   irm $actUrl | Import-Akn | Format-List *
+#>
+function Import-Akn {
+    [CmdletBinding()]
+    Param(
+        [Parameter(ValueFromPipeline)]$Document
+    )
+
+    Process {
+        #if ($null -eq $Document) {return} # TODO Not needed if sanity checks all handle nullable variables and the default is return.
+        if ($Document -is [xml]) {} # TODO Check that it's Akoma Ntoso.
+        elseif ($Document -is [string]) { try { $Document = [xml](Get-Content $Document) } catch { return } }
+        elseif ($Document -is [object[]]) { return ($Document | Import-Akn) }
+        else { return }
+
+        $nsmgr = New-Object -TypeName System.Xml.XmlNamespaceManager -ArgumentList $Document.NameTable
+        $nsmgr.AddNamespace("akn", "http://docs.oasis-open.org/legaldocml/ns/akn/3.0");
+        $Document.DocumentElement.SelectNodes($xPathSection, $nsmgr).forEach{
+            # TODO Should we sanity check $_ type?
+            $num = Get-XmlInnerText $_.SelectSingleNode($xPathNumAttr, $nsmgr)
+            $heading = Get-XmlInnerText $_.SelectSingleNode($xPathHeading, $nsmgr)
+            $_.SelectNodes($xPathRemoveAll, $nsmgr).ForEach{ $_.ParentNode.RemoveChild($_)>$null } # TODO This leaves errant spaces.
+            [PSCustomObject]@{
+                PSTypeName = "AknSection";
+                Id         = Get-XmlAttributeValue $_.Attributes["eId"];
+                Num        = $num;
+                Heading    = $heading;
+                Content    = Get-XmlInnerText $_.SelectSingleNode($xPathSelf, $nsmgr);
+            }
+        }
+    }
+
+    Begin {
+        $xPathSection = "//akn:section[not(ancestor::akn:hcontainer)]"
+        $xPathNumAttr = "./akn:num"
+        $xPathHeading = "./akn:heading"
+        $xPathSelf = "."
+        $xPathRemoveAll = "./akn:num|./akn:heading"
+        function Get-XmlAttributeValue([System.Xml.XmlAttribute]$obj) { if ($obj) { $obj.Value } }
+        function Get-XmlInnerText([System.Xml.XmlNode]$obj) { if ($obj) { $obj.InnerText.Trim() } }
+    }
+}
+Export-ModuleMember -Function Import-Akn
