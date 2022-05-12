@@ -10,14 +10,14 @@
 
  .Example
    Import-Module './AkomaNtoso.psm1'
-   $billUrl = 'https://www.govinfo.gov/link/bills/117/hr/1319?link-type=uslm'
-   $actUrl = 'https://www.govinfo.gov/link/plaw/117/public/2?link-type=uslm'
-   $compsUrl = 'https://www.govinfo.gov/content/pkg/COMPS-16472/uslm/COMPS-16472.xml'
-   $bill = irm $billUrl | Import-Uslm
-   $act = irm $actUrl | Import-Uslm
-   $comps = irm $compsUrl | Import-Uslm
-   Compare-Object $bill.Num $act.Num
-   Compare-Object $act.Num $comps.Num
+   $BillUrl = 'https://www.govinfo.gov/link/bills/117/hr/1319?link-type=uslm'
+   $ActUrl = 'https://www.govinfo.gov/link/plaw/117/public/2?link-type=uslm'
+   $CompsUrl = 'https://www.govinfo.gov/content/pkg/COMPS-16472/uslm/COMPS-16472.xml'
+   $Bill = irm $BillUrl | Import-Uslm
+   $Act = irm $ActUrl | Import-Uslm
+   $Comps = irm $CompsUrl | Import-Uslm
+   Compare-Object $Bill.Num $Act.Num
+   Compare-Object $Act.Num $Comps.Num
 #>
 function Import-Uslm {
     [CmdletBinding()]
@@ -86,8 +86,11 @@ Export-ModuleMember -Function Import-Uslm
 
  .Example
    Import-Module './AkomaNtoso.psm1'
-   $actUrl = 'https://www.legislation.gov.uk/ukpga/1982/11/data.akn'
-   irm $actUrl | Import-Akn | Format-List *
+   $proxy = [System.Net.WebRequest]::GetSystemWebProxy()
+   $proxy.Credentials = [System.Net.CredentialCache]::DefaultCredentials
+   $ActUrl = 'https://www.legislation.gov.uk/ukpga/1982/11/data.akn'
+   $Act = irm $ActUrl -Proxy $proxy.GetProxy($ActUrl)
+   $Act | Import-Akn | Format-List *
 #>
 function Import-Akn {
     [CmdletBinding()]
