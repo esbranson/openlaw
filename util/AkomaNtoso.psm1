@@ -6,16 +6,13 @@
   Import USLM sections from an XmlDocument as PSCustomObject[].
 
  .Parameter Document
-  The XmlDocument to parse.
+  The object, path, URI or array thereof to parse.
 
  .Example
    Import-Module './AkomaNtoso.psm1'
-   $BillUrl = 'https://www.govinfo.gov/link/bills/117/hr/1319?link-type=uslm'
-   $ActUrl = 'https://www.govinfo.gov/link/plaw/117/public/2?link-type=uslm'
-   $CompsUrl = 'https://www.govinfo.gov/content/pkg/COMPS-16472/uslm/COMPS-16472.xml'
-   $Bill = irm $BillUrl | Import-Uslm
-   $Act = irm $ActUrl | Import-Uslm
-   $Comps = irm $CompsUrl | Import-Uslm
+   $Bill = Import-Uslm 'https://www.govinfo.gov/link/bills/117/hr/1319?link-type=uslm'
+   $Act = Import-Uslm 'https://www.govinfo.gov/link/plaw/117/public/2?link-type=uslm'
+   $Comps = Import-Uslm 'https://www.govinfo.gov/content/pkg/COMPS-16472/uslm/COMPS-16472.xml'
    Compare-Object $Bill.Num $Act.Num
    Compare-Object $Act.Num $Comps.Num
 #>
@@ -28,9 +25,18 @@ function Import-Uslm {
     Process {
         #if ($null -eq $Document) {return} # TODO Not needed if sanity checks all handle nullable variables and the default is return.
         if ($Document -is [xml]) {} # TODO Check that it's Akoma Ntoso.
-        elseif ($Document -is [string]) { try { $Document = [xml](Get-Content $Document) } catch { return } }
+        elseif ($Document -is [string] -and [System.Uri]::IsWellFormedUriString($Document, [System.UriKind]::Absolute)) {
+            $proxy = [System.Net.WebRequest]::GetSystemWebProxy()
+            $proxy.Credentials = [System.Net.CredentialCache]::DefaultCredentials
+            $Document = Invoke-RestMethod $Document -Proxy $proxy.GetProxy($Document)
+        }
+        elseif ($Document -and $Document.GetType() -in @([string],[System.IO.Stream],[System.IO.TextReader],[System.Xml.XmlReader])) {
+            $DocumentInput = $Document
+            $Document = [System.Xml.XmlDocument]::new()
+            $Document.Load($DocumentInput)
+        }
         elseif ($Document -is [object[]]) { return ($Document | Import-Uslm) }
-        else { return }
+        else { return } # TODO Respectfully throw.
 
         $nsmgr = New-Object -TypeName System.Xml.XmlNamespaceManager -ArgumentList $Document.NameTable
         $nsmgr.AddNamespace("uslm", "http://schemas.gpo.gov/xml/uslm");
@@ -86,11 +92,7 @@ Export-ModuleMember -Function Import-Uslm
 
  .Example
    Import-Module './AkomaNtoso.psm1'
-   $proxy = [System.Net.WebRequest]::GetSystemWebProxy()
-   $proxy.Credentials = [System.Net.CredentialCache]::DefaultCredentials
-   $ActUrl = 'https://www.legislation.gov.uk/ukpga/1982/11/data.akn'
-   $Act = irm $ActUrl -Proxy $proxy.GetProxy($ActUrl)
-   $Act | Import-Akn | Format-List *
+   Import-Akn 'https://www.legislation.gov.uk/ukpga/1982/11/data.akn' | Format-List *
 #>
 function Import-Akn {
     [CmdletBinding()]
@@ -101,9 +103,18 @@ function Import-Akn {
     Process {
         #if ($null -eq $Document) {return} # TODO Not needed if sanity checks all handle nullable variables and the default is return.
         if ($Document -is [xml]) {} # TODO Check that it's Akoma Ntoso.
-        elseif ($Document -is [string]) { try { $Document = [xml](Get-Content $Document) } catch { return } }
+        elseif ($Document -is [string] -and [System.Uri]::IsWellFormedUriString($Document, [System.UriKind]::Absolute)) {
+            $proxy = [System.Net.WebRequest]::GetSystemWebProxy()
+            $proxy.Credentials = [System.Net.CredentialCache]::DefaultCredentials
+            $Document = Invoke-RestMethod $Document -Proxy $proxy.GetProxy($Document)
+        }
+        elseif ($Document -and $Document.GetType() -in @([string],[System.IO.Stream],[System.IO.TextReader],[System.Xml.XmlReader])) {
+            $DocumentInput = $Document
+            $Document = [System.Xml.XmlDocument]::new()
+            $Document.Load($DocumentInput)
+        }
         elseif ($Document -is [object[]]) { return ($Document | Import-Akn) }
-        else { return }
+        else { return } # TODO Respectfully throw.
 
         $nsmgr = New-Object -TypeName System.Xml.XmlNamespaceManager -ArgumentList $Document.NameTable
         $nsmgr.AddNamespace("akn", "http://docs.oasis-open.org/legaldocml/ns/akn/3.0");
