@@ -32,8 +32,7 @@ function Import-Akn {
         if ($Document -is [xml]) {} # TODO Check that it's Akoma Ntoso.
         elseif ($Document -is [string] -and [System.Uri]::IsWellFormedUriString($Document, [System.UriKind]::Absolute)) {
             $proxy = [System.Net.WebRequest]::GetSystemWebProxy()
-            $proxy.Credentials = [System.Net.CredentialCache]::DefaultCredentials
-            try { $Document = Invoke-RestMethod $Document -Proxy $proxy.GetProxy($Document) -ErrorAction Stop } catch { throw }
+            try { $Document = Invoke-RestMethod $Document -Proxy $proxy.GetProxy($Document) -ProxyUseDefaultCredentials -ErrorAction Stop } catch { throw }
         }
         elseif ($Document -and $Document.GetType() -in @([string], [System.IO.Stream], [System.IO.TextReader], [System.Xml.XmlReader])) {
             $DocumentInput = $Document
