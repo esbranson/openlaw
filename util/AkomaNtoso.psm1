@@ -32,7 +32,9 @@ function Import-Akn {
         if ($Document -is [xml]) {} # TODO Check that it's Akoma Ntoso.
         elseif ($Document -is [string] -and [System.Uri]::IsWellFormedUriString($Document, [System.UriKind]::Absolute)) {
             $proxy = [System.Net.WebRequest]::GetSystemWebProxy()
-            try { $Document = Invoke-RestMethod $Document -Proxy $proxy.GetProxy($Document) -ProxyUseDefaultCredentials -ErrorAction Stop } catch { throw }
+            $proxyParameter = @{}
+            if ($proxy.GetProxy($Document)) { $proxyParameter = @{Proxy = $proxy.GetProxy($Document); ProxyUseDefaultCredentials = $true } }
+            try { $Document = Invoke-RestMethod $Document @proxyParameter -ErrorAction Stop } catch { throw } # TODO Why is this not terminating without explicitly throwing?
         }
         elseif ($Document -and $Document.GetType() -in @([string], [System.IO.Stream], [System.IO.TextReader], [System.Xml.XmlReader])) {
             $DocumentInput = $Document
