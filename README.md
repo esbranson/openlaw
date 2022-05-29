@@ -1,25 +1,26 @@
 # Open Law
 
-This project provides a toolset for the conversion and analysis of legislative, regulatory and judicial documents with the [Akoma Ntoso](http://www.akomantoso.org/) legal document standard.
+This project builds toward a toolset for the conversion and analysis of legislative, regulatory and judicial documents with the [Akoma Ntoso](http://www.akomantoso.org/) legal document standard.
 
-Help by converting legal documents—anything!—into Akoma Ntoso XML.
+Help by converting legal documents—anything!—into Akoma Ntoso XML, and of course applications consuming the same. This project is only meant as a working demonstration of the possibilities, and for my own personal goals.
 
 # Rationale
 
 "Ignorance of the law is no excuse," as the saying goes, but a majority of citizens, nationals and residents are not informed about the law due to its inaccessibility, cost, language, complexity, volume, and rapid change. The law shapes economics and society, and thus the majority are denied the full profits of their democratic labor.
 
-Overcoming these barriers is a necessary step for true government and political transparency. This project can help do so by:
+Overcoming these barriers is a necessary step for true government and political transparency.
 
-* Providing standards-based retreival and presentation of the law over the World Wide Web.
-* Providing a minimal toolchain for analysis of legal information.
+# Architecture
 
-This project is not meant to exist alone in a vacuum. By taking advantage of a global community, this is meant as a working demonstration of the possibilities.
+This code buils towards a standards-based presentation of "the law" over the World Wide Web.
 
-# Utilities
+## Utilities
+
+A minimal toolchain for analysis of legal information.
 
 The `akncat` utility provides functionality similar to the UNIX `cat` utility but for Akoma Ntoso documents. There is also an [NLTK](http://www.nltk.org/) corpus reader for natural language processing. The PowerShell module provides convenience functions relevant to .NET environments.
 
-# Data
+## Data
 
 The current legal datasets have conversions to Akoma Ntoso:
 
