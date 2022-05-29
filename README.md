@@ -1,5 +1,3 @@
-# Open Law
-
 This project builds toward a minimal toolset for the conversion and analysis of legislative, regulatory and judicial documents with the [Akoma Ntoso](http://www.akomantoso.org/) and related legal document standards.
 
 # Rationale
