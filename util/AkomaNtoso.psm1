@@ -20,7 +20,7 @@
    Compare-Object $Act.Num $Comps.Num
    Import-Akn 'https://www.legislation.gov.uk/ukpga/1982/11/data.akn' | Format-List *
 #>
-function Import-Akn {
+function Import-AkomaNtoso {
     [CmdletBinding()]
     Param(
         [Parameter(ValueFromPipeline)]$Document,
@@ -114,4 +114,5 @@ function Import-Akn {
     }
 }
 Update-TypeData -TypeName "AknSection" -DefaultDisplayPropertySet "Num", "Heading" -DefaultKeyPropertySet "Num" -ErrorAction SilentlyContinue
-Export-ModuleMember -Function Import-Akn -ErrorAction SilentlyContinue
+New-Alias Import-Akn Import-AkomaNtoso
+Export-ModuleMember -Function * -Alias *
