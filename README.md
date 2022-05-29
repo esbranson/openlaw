@@ -8,8 +8,8 @@ Overcoming these barriers is a necessary step for democratic control of governme
 
 # Utilities
 
-* The `akncat` utility provides functionality similar to the UNIX `cat` utility but for Akoma Ntoso documents.
-* The `Import-AkomaNtoso` PowerShell cmdlet provides likewise for the .NET environment. 
+* The `akncat` utility provides functionality similar to the UNIX [`cat`](https://en.wikipedia.org/wiki/Cat_(Unix)) utility but for Akoma Ntoso documents.
+* The `Import-AkomaNtoso` [PowerShell](https://en.wikipedia.org/wiki/Windows_Terminal) cmdlet provides likewise for the .NET environment.
 * There is also an [NLTK](http://www.nltk.org/) corpus reader for natural language processing.
 
 # Data
