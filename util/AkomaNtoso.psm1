@@ -24,7 +24,7 @@ function Import-AkomaNtoso {
     [CmdletBinding()]
     Param(
         [Parameter(ValueFromPipeline)]$Document,
-        [switch]$IncludeRepealed
+        [switch]$IncludeAll
     )
 
     Process {
@@ -47,7 +47,12 @@ function Import-AkomaNtoso {
         $nsmgr = New-Object -TypeName System.Xml.XmlNamespaceManager -ArgumentList $Document.NameTable
         $nsmgr.AddNamespace("akn", "http://docs.oasis-open.org/legaldocml/ns/akn/3.0")
         $nsmgr.AddNamespace("uslm", "http://schemas.gpo.gov/xml/uslm")
-        $Document.DocumentElement.SelectNodes($xPathSection, $nsmgr).forEach{
+        $path = $xPathSection
+        if ($IncludeAll) {$path = $xPathSectionAll}
+        $Nodes = $Document.DocumentElement.SelectNodes($path, $nsmgr)
+        Write-Verbose "Nodes.Count $($Nodes.Count)"
+
+        $Nodes.forEach{
             # TODO Should we sanity check $_ type?
             $Id = Get-Id $_ $nsmgr
             $Num = Get-Num $_ $nsmgr
@@ -65,12 +70,13 @@ function Import-AkomaNtoso {
                 IsRepealed = $IsRepealed;
                 Content    = $Content;
             } | 
-            Where-Object { $IncludeRepealed -or -not $_.IsRepealed }
+            Where-Object { $IncludeAll -or -not $_.IsRepealed }
         }
     }
 
     Begin {
         $xPathSection = "//akn:section[not(ancestor::akn:hcontainer)]|//uslm:section[not(ancestor::uslm:quotedContent)]"
+        $xPathSectionAll = "//akn:section|//uslm:section"
         $xPathUSCIdentifierAttr = "./uslm:editorialNote[@role='uscRef']/uslm:ref/@href"
         $xPathUSCSidenoteIdentifierAttr = "./uslm:sidenote//uslm:ref/@href" # TODO
         $xPathNumAttr = "./akn:num|./uslm:num/@value"
