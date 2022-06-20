@@ -170,7 +170,7 @@ def do_parse(pipename, fn, errq):
 		# open files, build threads
 		# TODO different types of files?
 		mime = mimetypes.guess_type(fn)
-		if mime[0] == 'application/rtf':
+		if mime[0] in ('application/rtf','application/vnd.openxmlformats-officedocument.wordprocessingml.document'):
 			filethread = threading.Thread(target=OOFile.run, args=(pipename, fn, errq, paraq))
 		else:
 			logging.critical('do_parse unknown filetype: {} {}'.format(fn, mime))
@@ -949,7 +949,7 @@ class OOFile():
 		try:
 			doc = desktop.loadComponentFromURL(url ,'_blank', 0, (uno.createUnoStruct('com.sun.star.beans.PropertyValue', 'ReadOnly', 0, True, 0),))
 		except uno.getClass('com.sun.star.lang.IllegalArgumentException') as e:
-			logging.critical('OOFile.parse file not found: {}'.format(filename))
+			logging.critical('OOFile.parse file not found: {}'.format(e))
 			outq.put(False)
 			return
 		except uno.getClass('com.sun.star.lang.DisposedException') as e:
@@ -1061,7 +1061,7 @@ class OOFile():
 		if pipename is None:
 			pipename = 'officepipe-'+next(tempfile._RandomNameSequence())
 		tmpd = tempfile.TemporaryDirectory()
-		cmd = 'soffice --accept="pipe,name='+pipename+';urp;StarOffice.ServiceManager" --norestore --nologo --headless --nolockcheck'
+		cmd = 'soffice --writer --accept="pipe,name='+pipename+';urp;StarOffice.ServiceManager" --norestore --nologo --headless --nolockcheck'
 		p = subprocess.Popen(shlex.split(cmd), env={"HOME": tmpd.name}, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 		return pipename, tmpd, p
 
