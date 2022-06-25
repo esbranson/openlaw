@@ -111,7 +111,7 @@ def do_it(fns, fout, nprocs, nthreads):
 		procs.append(OOFile.start_soffice())
 	time.sleep(5)
 	# xml body
-	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0/WD17"})
+	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0"})
 	act = etree.SubElement(akn, 'act')
 	meta = etree.SubElement(act, 'meta')
 	body = etree.SubElement(act, 'body')
@@ -500,7 +500,7 @@ class OOFileParser:
 		return self.transition_idle(signal)
 	def event_idle(self, signal):
 		logging.uberdebug('idle')
-		line, adjust, lmargin, weight = signal['line'], signal['adjust'], signal['lmargin'], signal['weight']
+		line, adjust, lmargin, weight, align = signal['line'], signal['adjust'], signal['lmargin'], signal['weight'], signal['align']
 		if line == '':
 			return self.transition_self(signal)
 		elif lmargin > 0:
@@ -517,7 +517,7 @@ class OOFileParser:
 		# XXX should we only be able to enter subheader state
 		# from heirarchy state to prevent mistaking text for subheaders?
 #		elif adjust == 'center' and not line.startswith('WARNING'):
-		elif adjust == 'center' and self.last_line_ended_with_colon is False:
+		elif (adjust == 'center' or align == 'CENTER') and self.last_line_ended_with_colon is False:
 			return self.transition_heirarchy_subheader(signal)
 		else:
 			# assume text attached to previous section/subsection
@@ -527,7 +527,7 @@ class OOFileParser:
 	#
 	def event_heirarchy(self, signal):
 		logging.uberdebug('heirarchy')
-		line, adjust, weight = signal['line'], signal['adjust'], signal['weight']
+		line, adjust, weight, align = signal['line'], signal['adjust'], signal['weight'], signal['align']
 		if line == '':
 			# don't transition because we may get subheader
 			return self.transition_self(signal)
@@ -538,7 +538,7 @@ class OOFileParser:
 		elif OOFileParser.test_anonymous_heirarchy(line, adjust, weight):
 			# XXX skip anonymous heirarchies
 			return self.transition_self(signal)
-		elif adjust == 'center': # XXX should we test on last_line_ended_with_colon?
+		elif adjust == 'center' or align == 'CENTER': # XXX should we test on last_line_ended_with_colon?
 			return self.transition_heirarchy_subheader(signal)
 		else: # XXX is there something better to do here? will a subheader ever not be centered?
 			return self.transition_heirarchy_flush(self.transition_text, signal)
@@ -568,7 +568,8 @@ class OOFileParser:
 		if line == '':
 			return self.transition_section_note_one(signal)
 		else:
-			raise RuntimeError('event_section_note ERROR: {}'.format(repr(line)))
+			logging.warning('section_note assume one: {}'.format(signal))
+			return self.transition_section_note_one(signal)
 	def event_section_note_one(self, signal):
 		logging.uberdebug('section_note_one')
 		line, adjust = signal['line'], signal['adjust']
@@ -579,7 +580,8 @@ class OOFileParser:
 		elif OOFileParser.test_subsec(line, adjust):
 			return self.transition_subsection(signal)
 		else:
-			raise RuntimeError('event_section_note_one ERROR: {}'.format(repr(line)))
+			logging.warning('section_note_one assume two: {}'.format(signal))
+			return self.transition_section_note_two(signal)
 	def event_section_note_two(self, signal):
 		logging.uberdebug('section_note_two')
 		line, adjust = signal['line'], signal['adjust']
@@ -590,8 +592,8 @@ class OOFileParser:
 		elif OOFileParser.test_sec(line, adjust):
 			return self.transition_section(signal)
 		else:
-			logging.warning('section_note_two assume heirarchy: {}'.format(signal))
-			return self.transition_heirarchy(signal)
+			logging.warning('section_note_two assume text: {}'.format(signal))
+			return self.transition_text(signal)
 	def event_text(self, signal):
 		logging.uberdebug('text')
 		line, adjust, lmargin = signal['line'], signal['adjust'], signal['lmargin']
@@ -970,6 +972,7 @@ class OOFile():
 			adjust = None
 			weightn = -1
 			style = None
+			align = None
 			# skip non-paragraphs
 			if not para.supportsService('com.sun.star.text.Paragraph'):
 				continue
@@ -979,6 +982,8 @@ class OOFile():
 			# get adjustment
 			if para.supportsService('com.sun.star.style.ParagraphProperties') and hasattr(para, 'ParaAdjust'):
 				adjustn = para.ParaAdjust
+			if para.supportsService('com.sun.star.style.ParagraphProperties') and hasattr(para, 'ParaTabStops') and hasattr(para.ParaTabStops[0], "Alignment"):
+				align = para.ParaTabStops[0].Alignment.value
 			ss = []
 			# get an XEnumeration of com.sun.star.text.TextPortion objects
 			for portion in OOFile.XEnumeration(para):
@@ -995,6 +1000,7 @@ class OOFile():
 					style = portion.ParaStyleName # XXX need to strip?
 			# interpret data
 			s = str.join('', ss)
+			logging.uberdebug(f'adjustn {adjustn}')
 			if adjustn == 3: # com.sun.star.style.ParagraphAdjust
 				adjust = 'center'
 			elif adjustn == 0:
@@ -1013,7 +1019,8 @@ class OOFile():
 			else:
 				logging.warning('OOFile.parse unknown weight: {}'.format(weightn))
 				weight = None
-			message = {'line': s, 'adjust': adjust, 'lmargin': lmargin, 'weight': weight, 'style': style}
+			message = {'align': align, 'adjust': adjust, 'lmargin': lmargin, 'weight': weight, 'style': style, 'line': s}
+			logging.uberdebug(f'{message}')
 			# check for error message
 			if errq.qsize() > 0:
 				try:
