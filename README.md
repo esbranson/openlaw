@@ -1,3 +1,5 @@
+# openlaw
+
 This project builds toward a minimal toolset for the conversion and analysis of legislative, regulatory and judicial documents with the [Akoma Ntoso](http://www.akomantoso.org/) and related legal document standards.
 
 # Rationale
@@ -19,6 +21,10 @@ The current legal datasets have conversions to Akoma Ntoso:
 * ~~United States Code~~: Cornell LII LexCraft was superseded by USLM.
 * ~~California codified statutes~~: Out of date?
 * ~~Colorado Revised Statutes~~: Out of date?
+
+# License
+
+Copyright is waived, see the CC0 in the LICENSE file.
 
 # Caveat emptor
 
