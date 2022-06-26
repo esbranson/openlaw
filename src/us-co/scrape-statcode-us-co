@@ -134,6 +134,8 @@ def do_it(fns, fout, nprocs, nthreads):
 				# XXX is this really shutting down executor?
 				raise RuntimeError('do_parse failed: xml is None')
 			body.append(xml)
+#		css = etree.ProcessingInstruction("xml-stylesheet", text='type="text/css" href="akn.css"')
+#		akn.addprevious(css)
 	except BaseException as e:
 		logging.critical('do_it exception: {} {}'.format(type(e), e))
 		ret = 1
@@ -219,6 +221,7 @@ class XMLBuilder:
 		self.state['paragraph'] = None
 		self.state['subparagraph'] = None
 		self.state['subsubparagraph'] = None
+		self.state_last = None
 	##
 	#
 	#
@@ -252,11 +255,24 @@ class XMLBuilder:
 	# Process a signal.
 	#
 	def event(self, signal):
-		typ = signal['type']
+		typ,subtype = signal['type'], signal['subtype']
 		if typ in {'heirarchy'}:
 			self.event_heirarchy(signal)
+		elif typ in {'text'}:
+			self.event_text(signal)
 		else:
 			raise RuntimeError('XMLBuilder: unknown event: {}'.format(signal))
+	##
+	#
+	#
+	def event_text(self, signal):
+		typ, text = signal['subtype'], signal['content']
+		content_el = self.get_content()
+		if not content_el:
+			logging.warning(f'ignoring text {text}')
+			return
+		pel = etree.SubElement(content_el, 'p')
+		pel.text = text
 	##
 	# All heirarchical elements are essentially the same, except that only
 	# sections and below have content and have different ID algorithms.
@@ -269,6 +285,7 @@ class XMLBuilder:
 		# create element
 		el = etree.Element(typ)
 		# info
+		tel = None
 #		el.attrib['title'] = self.get_name(typ, enum)
 		el.attrib['eId'] = self.get_id(typ, enum)
 		if status:
@@ -290,7 +307,7 @@ class XMLBuilder:
 		else:
 			logging.debug('event_section no parent: {}'.format(signal))
 		# update state
-		self.set_state(el, typ)
+		self.set_state(el, typ, tel)
 	##
 	# Determine the type of element from its enumeration.
 	#
@@ -388,11 +405,17 @@ class XMLBuilder:
 			if self.state[key] is not None:
 				return self.state[key]
 	##
+	#
+	#
+	def get_content(self):
+		return self.content_last
+	##
 	# Update (and normalize) state.
 	#
-	def set_state(self, el, typ):
+	def set_state(self, el, typ, content_el):
 		# update state
 		self.state[typ] = el
+		self.content_last = content_el
 		# normalize state: clear all elements below type from state
 		keys = list(self.state.keys())
 		keys = keys[keys.index(typ)+1:]
@@ -545,6 +568,9 @@ class OOFileParser:
 			return self.transition_heirarchy_subheader(signal)
 		else: # XXX is there something better to do here? will a subheader ever not be centered?
 			return self.transition_heirarchy_flush(self.transition_text, signal)
+	##
+	# event_section
+	#
 	def event_section(self, signal):
 		logging.uberdebug('section')
 		line, adjust = signal['line'], signal['adjust']
@@ -563,7 +589,7 @@ class OOFileParser:
 #			return self.transition_subsection(signal)
 		elif "Editor's note" in line:
 			return self.transition_section_note(signal)
-		else: # XXX is there something better to do here?
+		else: # XXX 
 			return self.transition_text(signal)
 	def event_section_note(self, signal):
 		logging.uberdebug('section_note')
@@ -689,16 +715,16 @@ class OOFileParser:
 			subsec = subsec[3]
 		self.state = self.StateEnum.section
 		return ret
-#	def transition_subsection(self, signal):
-#		logging.uberdebug('subsection: {}'.format(signal))
-#		subsec = OOFileParser.tokenize_subsection(signal['line'])
-#		ret = []
-#		while subsec is not None: # return enum, status, text, subsecl
-#			logging.uberdebug('subsection subsec: {}'.format(subsec))
-#			ret.append({'type': 'heirarchy', 'subtype': None, 'name': None, 'enum': subsec[0], 'heading': None, 'content': subsec[2], 'status': subsec[1]})
-#			subsec = subsec[3]
-#		self.state = self.StateEnum.section
-#		return ret
+	def transition_subsection(self, signal):
+		logging.uberdebug('subsection: {}'.format(signal))
+		subsec = OOFileParser.tokenize_subsection(signal['line'])
+		ret = []
+		while subsec is not None: # return enum, status, text, subsecl
+			logging.uberdebug('subsection subsec: {}'.format(subsec))
+			ret.append({'type': 'heirarchy', 'subtype': None, 'name': None, 'enum': subsec[0], 'heading': None, 'content': subsec[2], 'status': subsec[1]})
+			subsec = subsec[3]
+		self.state = self.StateEnum.section
+		return ret
 	def transition_section_note(self, signal):
 		logging.uberdebug('section_note: {}'.format(signal))
 		self.state = self.StateEnum.section_note
@@ -713,8 +739,9 @@ class OOFileParser:
 		return []
 	def transition_text(self, signal):
 		logging.debug('text: {}'.format(signal))
+		ret = [{'type': 'text', 'subtype': None, 'name': None, 'enum': None, 'heading': None, 'content': signal['line'], 'status': None}]
 		self.state = self.StateEnum.text
-		return []
+		return ret
 	#
 	# XXX these methods are complete hacks
 	#
@@ -808,13 +835,14 @@ class OOFileParser:
 	##
 	# Return a parsed subsection.
 	#
-#	@staticmethod
-#	def tokenize_subsection(line):
+	@staticmethod
+	def tokenize_subsection(line):
 #		l = line.split('\xa0')
-#		logging.uberdebug('tokenize_subsection: {}'.format(l))
+		logging.uberdebug('')
 #		l = [s.strip() for s in l]
 #		ret = OOFileParser.tokenize_subsection_r(l)
 #		return ret
+		return None, None, line, None
 	##
 	# Parse subsection(s) from a simply tokenized string.
 	#
@@ -1037,7 +1065,6 @@ class OOFile():
 				logging.warning('OOFile.parse unknown weight: {}'.format(weightn))
 				weight = None
 			message = {'align': align, 'adjust': adjust, 'lmargin': lmargin, 'weight': weight, 'style': style, 'line': s}
-			logging.uberdebug(f'{message}')
 			# check for error message
 			if errq.qsize() > 0:
 				try:
