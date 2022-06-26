@@ -399,6 +399,8 @@ class XMLBuilder:
 		for key in keys:
 			self.state[key] = None
 
+regex_sec = r'^(\d+\-\d+\-[\d\.]+)\.\s\s+(.+)\.\s+(.+)'
+
 ##
 # A state machine program that parses a stream of unstructured lines into
 # a stream of structured elements.
@@ -678,7 +680,7 @@ class OOFileParser:
 	def transition_section(self, signal):
 		logging.uberdebug('section: {}'.format(signal))
 		sec = OOFileParser.tokenize_section(signal['line']) # return enum, head, status, text, subsecl
-		logging.uberdebug('section sec: {}'.format(sec))
+		logging.uberdebug('section sec: {sec}')
 		ret = [{'type': 'heirarchy', 'subtype': 'section', 'name': None, 'enum': sec[0], 'heading': sec[1], 'content': sec[3], 'status': sec[2]}]
 		subsec = sec[4]
 		while subsec is not None: # return enum, status, text, subsecl
@@ -718,7 +720,7 @@ class OOFileParser:
 	#
 	@staticmethod
 	def test_sec(line, adjust):
-		m = re.search('(\d+\-\d+\-\d+\.)(.+)', line)
+		m = re.search(regex_sec, line)
 		return m is not None
 #		return len(line) and '-' in line and line.split('-',1)[0][-1].isdigit() and adjust != 'center' and line[0].isdigit()
 	@staticmethod
@@ -756,6 +758,12 @@ class OOFileParser:
 	#
 	@staticmethod
 	def tokenize_section(line):
+		m = re.search(regex_sec, line)
+		if m:
+			enum = m.group(1)
+			heading = m.group(2)
+			text = m.group(3)
+			return enum, heading, None, text, None
 		l = line.split('\xa0')
 		logging.uberdebug('tokenize_section: {}'.format(l))
 		l = [s.strip() for s in l]
@@ -783,7 +791,7 @@ class OOFileParser:
 	#
 	@staticmethod
 	def parse_sec_enum(s):
-		m = re.search('(\d+\-\d+\-\d+\.)(.+)', line)
+		m = re.search(regex_sec, s)
 		if m:
 			return m.group(1)
 		return s.rstrip('.')
@@ -800,53 +808,53 @@ class OOFileParser:
 	##
 	# Return a parsed subsection.
 	#
-	@staticmethod
-	def tokenize_subsection(line):
-		l = line.split('\xa0')
-		logging.uberdebug('tokenize_subsection: {}'.format(l))
-		l = [s.strip() for s in l]
-		ret = OOFileParser.tokenize_subsection_r(l)
-		return ret
+#	@staticmethod
+#	def tokenize_subsection(line):
+#		l = line.split('\xa0')
+#		logging.uberdebug('tokenize_subsection: {}'.format(l))
+#		l = [s.strip() for s in l]
+#		ret = OOFileParser.tokenize_subsection_r(l)
+#		return ret
 	##
 	# Parse subsection(s) from a simply tokenized string.
 	#
 	# XXX whether its a sub-subsection or another type should be
 	# decided at higher layers
 	#
-	@staticmethod
-	def tokenize_subsection_r(l):
-		logging.uberdebug('tokenize_subsection_r: {}'.format(l))
-		enum = status = subsecl = None
-		textl = []
-		for n,s in enumerate(l):
-			if s == '':
-				pass
-			# this subsection's enum
-			elif enum is None:
-				enum,text = OOFileParser.parse_subsec_enum(s)
-				logging.uberdebug('tokenize_subsection_r enum: {} {}'.format(repr(enum), repr(text)))
-				if text is not None:
-					textl.append(text)
-			# repealed
-			# XXX this should be a note or history
-			elif OOFileParser.test_subsec_repealed(s):
-				textl.append(OOFileParser.parse_subsec_repealed(s))
-				status = 'removed'
-			# enum indicating a new sub-subsection
-			elif OOFileParser.test_enum(s):
-				logging.uberdebug('tokenize_subsection_r recurs: {}'.format(l[n:]))
-				subsecl = OOFileParser.tokenize_subsection_r(l[n:])
-				break # input has been consumed
-			# text for this subsection
-			else:
-				logging.uberdebug('tokenize_subsection_r text: {}'.format(s))
-				textl.append(s)
-		text = str.join(' ', textl)
-		if text == 'Repealed.' or text == 'Repealed':
-			text = None
-			status = 'removed'
-		text = text or None
-		return enum, status, text, subsecl
+#	@staticmethod
+#	def tokenize_subsection_r(l):
+#		logging.uberdebug('tokenize_subsection_r: {}'.format(l))
+#		enum = status = subsecl = None
+#		textl = []
+#		for n,s in enumerate(l):
+#			if s == '':
+#				pass
+#			# this subsection's enum
+#			elif enum is None:
+#				enum,text = OOFileParser.parse_subsec_enum(s)
+#				logging.uberdebug('tokenize_subsection_r enum: {} {}'.format(repr(enum), repr(text)))
+#				if text is not None:
+#					textl.append(text)
+#			# repealed
+#			# XXX this should be a note or history
+#			elif OOFileParser.test_subsec_repealed(s):
+#				textl.append(OOFileParser.parse_subsec_repealed(s))
+#				status = 'removed'
+#			# enum indicating a new sub-subsection
+#			elif OOFileParser.test_enum(s):
+#				logging.uberdebug('tokenize_subsection_r recurs: {}'.format(l[n:]))
+#				subsecl = OOFileParser.tokenize_subsection_r(l[n:])
+#				break # input has been consumed
+#			# text for this subsection
+#			else:
+#				logging.uberdebug('tokenize_subsection_r text: {}'.format(s))
+#				textl.append(s)
+#		text = str.join(' ', textl)
+#		if text == 'Repealed.' or text == 'Repealed':
+#			text = None
+#			status = 'removed'
+#		text = text or None
+#		return enum, status, text, subsecl
 	##
 	# Test if string represents an enumeration.
 	#
@@ -928,8 +936,6 @@ class OOFileParser:
 		if orig is not line:
 			logging.debug('fixup replace: {} {}'.format(repr(orig), repr(line)))
 		return line
-
-
 
 ##
 #
