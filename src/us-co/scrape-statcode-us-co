@@ -269,8 +269,8 @@ class XMLBuilder:
 		# create element
 		el = etree.Element(typ)
 		# info
-		el.attrib['title'] = self.get_name(typ, enum)
-		el.attrib['id'] = self.get_id(typ, enum)
+#		el.attrib['title'] = self.get_name(typ, enum)
+		el.attrib['eId'] = self.get_id(typ, enum)
 		if status:
 			el.attrib['status'] = status
 		if enum:
@@ -341,13 +341,13 @@ class XMLBuilder:
 		parentel = self.get_state_parent(typ)
 		if parentel is None:
 			# XXX only top-most element's parent will be None?
-			ident = '/' + typ + '-' + enum
+			ident = typ + '-' + enum
 		elif typ in {'section'}:
-			ident = '/' + typ + '-' + enum
+			ident = typ + '-' + enum
 		elif XMLBuilder.test_above_section(typ):
-			ident = parentel.attrib['id'] + '/' + typ + '-' + enum
+			ident = parentel.attrib['eId'] + '-' + typ + '-' + enum
 		elif XMLBuilder.test_below_section(typ):
-			ident = parentel.attrib['id'] + '/' + enum
+			ident = parentel.attrib['eId'] + '-' + enum
 		else:
 			logging.critical('get_id unknown type: {}'.format(typ))
 			raise RuntimeError('get_id unknown type: {}'.format(typ))
@@ -399,7 +399,7 @@ class XMLBuilder:
 		for key in keys:
 			self.state[key] = None
 
-regex_sec = r'^(\d+\-\d+\-[\d\.]+)\.\s\s+(.+)\.\s+(.+)'
+regex_sec = r'^(\d+\-\d+\-[\d\.]+)\.\s\s+(.+?)\.\s+(.+)'
 
 ##
 # A state machine program that parses a stream of unstructured lines into
