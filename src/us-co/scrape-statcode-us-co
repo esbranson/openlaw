@@ -5,12 +5,12 @@ usage="""
 scrape-statcode-us-co - convert the Colorado Revised Statutes into Akoma Ntoso
 
 See <https://en.wikipedia.org/wiki/Colorado_Revised_Statutes>. Given titles as
-RTF files, in order, this will output them as an Akoma Ntoso XML file.
+Open XML files, in order, this will output them as an Akoma Ntoso XML file.
 
 Usage:	scrape-statcode-us-co [options] file [file ...]
 Arguments:
 
-	file		input RTF file from the bulk download site
+	file		input .docx file from the bulk download site
 	-o file		output file ('-' for stdout) (default: stdout)
 	-n num		number of parallel threads (default: 2)
 	-p num		number of Open Office processes (default: 1)
@@ -35,6 +35,7 @@ import threading
 import queue
 import tempfile
 import types
+import re
 
 ##
 # Entry function: Parse paramters, call main function.
@@ -507,8 +508,8 @@ class OOFileParser:
 			return self.transition_text(signal)
 		elif OOFileParser.test_sec(line, adjust):
 			return self.transition_section(signal)
-		elif OOFileParser.test_subsec(line, adjust):
-			return self.transition_subsection(signal)
+#		elif OOFileParser.test_subsec(line, adjust):
+#			return self.transition_subsection(signal)
 		elif OOFileParser.test_heirarchy(line):
 			return self.transition_heirarchy(signal)
 		elif OOFileParser.test_anonymous_heirarchy(line, adjust, weight):
@@ -556,8 +557,8 @@ class OOFileParser:
 			return self.transition_text(signal)
 		elif OOFileParser.test_sec(line, adjust):
 			return self.transition_section(signal)
-		elif OOFileParser.test_subsec(line, adjust):
-			return self.transition_subsection(signal)
+#		elif OOFileParser.test_subsec(line, adjust):
+#			return self.transition_subsection(signal)
 		elif "Editor's note" in line:
 			return self.transition_section_note(signal)
 		else: # XXX is there something better to do here?
@@ -577,8 +578,8 @@ class OOFileParser:
 			return self.transition_section_note_two(signal)
 		elif OOFileParser.test_sec(line, adjust):
 			return self.transition_section(signal)
-		elif OOFileParser.test_subsec(line, adjust):
-			return self.transition_subsection(signal)
+#		elif OOFileParser.test_subsec(line, adjust):
+#			return self.transition_subsection(signal)
 		else:
 			logging.warning('section_note_one assume two: {}'.format(signal))
 			return self.transition_section_note_two(signal)
@@ -587,8 +588,8 @@ class OOFileParser:
 		line, adjust = signal['line'], signal['adjust']
 		if line == '':
 			return self.transition_idle(signal)
-		elif OOFileParser.test_subsec(line, adjust):
-			return self.transition_subsection(signal)
+#		elif OOFileParser.test_subsec(line, adjust):
+#			return self.transition_subsection(signal)
 		elif OOFileParser.test_sec(line, adjust):
 			return self.transition_section(signal)
 		else:
@@ -609,8 +610,8 @@ class OOFileParser:
 			return self.transition_text(signal)
 		elif OOFileParser.test_sec(line, adjust):
 			return self.transition_section(signal)
-		elif OOFileParser.test_subsec(line, adjust):
-			return self.transition_subsection(signal)
+#		elif OOFileParser.test_subsec(line, adjust):
+#			return self.transition_subsection(signal)
 		elif OOFileParser.test_heirarchy(line):
 			return self.transition_heirarchy(signal)
 		else:
@@ -665,11 +666,14 @@ class OOFileParser:
 	# Flush stashed output signal
 	#
 	def transition_heirarchy_flush(self, f, signal):
+		logging.uberdebug(f'h_flush {signal}')
 		assert isinstance(f, types.MethodType)
 		sig = self.stash
+		logging.uberdebug(f'h_flush {sig}')
 		self.stash = None
 		ret = f(signal)
 		ret.insert(0, sig)
+		logging.uberdebug(f'h_flush {ret}')
 		return ret
 	def transition_section(self, signal):
 		logging.uberdebug('section: {}'.format(signal))
@@ -683,16 +687,16 @@ class OOFileParser:
 			subsec = subsec[3]
 		self.state = self.StateEnum.section
 		return ret
-	def transition_subsection(self, signal):
-		logging.uberdebug('subsection: {}'.format(signal))
-		subsec = OOFileParser.tokenize_subsection(signal['line'])
-		ret = []
-		while subsec is not None: # return enum, status, text, subsecl
-			logging.uberdebug('subsection subsec: {}'.format(subsec))
-			ret.append({'type': 'heirarchy', 'subtype': None, 'name': None, 'enum': subsec[0], 'heading': None, 'content': subsec[2], 'status': subsec[1]})
-			subsec = subsec[3]
-		self.state = self.StateEnum.section
-		return ret
+#	def transition_subsection(self, signal):
+#		logging.uberdebug('subsection: {}'.format(signal))
+#		subsec = OOFileParser.tokenize_subsection(signal['line'])
+#		ret = []
+#		while subsec is not None: # return enum, status, text, subsecl
+#			logging.uberdebug('subsection subsec: {}'.format(subsec))
+#			ret.append({'type': 'heirarchy', 'subtype': None, 'name': None, 'enum': subsec[0], 'heading': None, 'content': subsec[2], 'status': subsec[1]})
+#			subsec = subsec[3]
+#		self.state = self.StateEnum.section
+#		return ret
 	def transition_section_note(self, signal):
 		logging.uberdebug('section_note: {}'.format(signal))
 		self.state = self.StateEnum.section_note
@@ -714,7 +718,9 @@ class OOFileParser:
 	#
 	@staticmethod
 	def test_sec(line, adjust):
-		return len(line) and '.\xa0' in line and '-' in line and line.split('-',1)[0][-1].isdigit() and adjust != 'center' and line[0].isdigit()
+		m = re.search('(\d+\-\d+\-\d+\.)(.+)', line)
+		return m is not None
+#		return len(line) and '-' in line and line.split('-',1)[0][-1].isdigit() and adjust != 'center' and line[0].isdigit()
 	@staticmethod
 	def test_subsec(line, adjust):
 		return len(line) and '\xa0' in line and line[0] == '(' and ')' in line and adjust != 'center' and ' ' not in line.split(')',1)[0] and '_' not in line.split(')',1)[0] and '\xa0' not in line.split(')',1)[0]
@@ -760,22 +766,26 @@ class OOFileParser:
 				pass
 			elif enum is None:
 				enum = OOFileParser.parse_sec_enum(s)
-				logging.uberdebug('tokenize_section enum: {}'.format(enum))
+				logging.uberdebug(f'tokenize_section enum: {enum}')
 			elif head is None:
 				head,status = OOFileParser.parse_sec_head(s)
 				logging.uberdebug('tokenize_section head: {} {}'.format(head, status))
-			elif OOFileParser.test_enum(s):
-				subsecl = OOFileParser.tokenize_subsection_r(l[n:])
-				break # input has been consumed
+#			elif OOFileParser.test_enum(s):
+#				subsecl = OOFileParser.tokenize_subsection_r(l[n:])
+#				break # input has been consumed
 			else:
 				textl.append(s)
 		text = str.join(' ', textl) or None
-		return enum, head, status, text, subsecl
+#		return enum, head, status, text, subsecl
+		return enum, head, status, text, None
 	##
 	# Return a parsed section string.
 	#
 	@staticmethod
 	def parse_sec_enum(s):
+		m = re.search('(\d+\-\d+\-\d+\.)(.+)', line)
+		if m:
+			return m.group(1)
 		return s.rstrip('.')
 	##
 	# Return a parsed heading string.
@@ -919,6 +929,8 @@ class OOFileParser:
 			logging.debug('fixup replace: {} {}'.format(repr(orig), repr(line)))
 		return line
 
+
+
 ##
 #
 #
@@ -1000,7 +1012,6 @@ class OOFile():
 					style = portion.ParaStyleName # XXX need to strip?
 			# interpret data
 			s = str.join('', ss)
-			logging.uberdebug(f'adjustn {adjustn}')
 			if adjustn == 3: # com.sun.star.style.ParagraphAdjust
 				adjust = 'center'
 			elif adjustn == 0:
