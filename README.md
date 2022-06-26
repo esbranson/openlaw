@@ -18,9 +18,9 @@ Overcoming these barriers is a necessary step for democratic control of governme
 
 The current legal datasets have conversions to Akoma Ntoso:
 
+* Colorado Revised Statutes: ¯\_(ツ)_/¯
 * ~~United States Code~~: Cornell LII LexCraft was superseded by USLM.
 * ~~California codified statutes~~: Out of date?
-* ~~Colorado Revised Statutes~~: Out of date?
 
 ## License
 
