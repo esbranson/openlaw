@@ -112,7 +112,8 @@ def do_it(fns, fout, nprocs, nthreads):
 		procs.append(OOFile.start_soffice())
 	time.sleep(5)
 	# xml body
-	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0"})
+	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0", "xsi": "http://www.w3.org/2001/XMLSchema-instance"})
+	akn.attrib['{http://www.w3.org/2001/XMLSchema-instance}schemaLocation'] = "http://docs.oasis-open.org/legaldocml/ns/akn/3.0 ../schemas/akomantoso30.xsd"
 	act = etree.SubElement(akn, 'act')
 	meta = etree.SubElement(act, 'meta')
 	body = etree.SubElement(act, 'body')
@@ -221,7 +222,7 @@ class XMLBuilder:
 		self.state['paragraph'] = None
 		self.state['subparagraph'] = None
 		self.state['subsubparagraph'] = None
-		self.state_last = None
+		self.last = None
 	##
 	#
 	#
@@ -263,14 +264,21 @@ class XMLBuilder:
 		else:
 			raise RuntimeError('XMLBuilder: unknown event: {}'.format(signal))
 	##
+	# Append the p/text() to the current heirarchy element. If the current heirarchy element does not have a content child element, create it.
 	#
+	# Right now only transition_text is emitting these messages.
 	#
 	def event_text(self, signal):
-		typ, text = signal['subtype'], signal['content']
-		content_el = self.get_content()
-		if not content_el:
+		text = signal['content']
+		last_el = self.get_last()
+		if last_el is None:
 			logging.warning(f'ignoring text {text}')
 			return
+		# Get or create content element.
+		content_el = last_el.find("./content")
+		if content_el is None:
+			content_el = etree.SubElement(last_el, 'content')
+		# Append new p element.
 		pel = etree.SubElement(content_el, 'p')
 		pel.text = text
 	##
@@ -307,7 +315,7 @@ class XMLBuilder:
 		else:
 			logging.debug('event_section no parent: {}'.format(signal))
 		# update state
-		self.set_state(el, typ, tel)
+		self.set_state(el, typ)
 	##
 	# Determine the type of element from its enumeration.
 	#
@@ -405,36 +413,34 @@ class XMLBuilder:
 			if self.state[key] is not None:
 				return self.state[key]
 	##
+	# Get the last heirarchy element that was set.
 	#
-	#
-	def get_content(self):
-		return self.content_last
+	def get_last(self):
+		return self.last
 	##
-	# Update (and normalize) state.
+	# Set (normalize and update) state.
 	#
-	def set_state(self, el, typ, content_el):
+	# NOTE: Setting this will change which element gets the current text.
+	#
+	def set_state(self, el, typ):
 		# update state
 		self.state[typ] = el
-		self.content_last = content_el
 		# normalize state: clear all elements below type from state
 		keys = list(self.state.keys())
 		keys = keys[keys.index(typ)+1:]
 		for key in keys:
 			self.state[key] = None
+		# Reset the latest
+		self.last = el
 
 regex_sec = r'^(\d+\-[\d\.]+\-[\d\.]+)\.\s\s+(.+?)\.\s+(.+)'
 
 ##
-# A state machine program that parses a stream of unstructured lines into
-# a stream of structured elements.
 #
-# Its essentially a Mealy machine, whose output is a list of
-# structured elements, which are returned on event(). The parse() function
-# will drive the event loop and yield each such line.
+# Here we do essential data processing.
 #
-# XXX need to track down those random heirarchical subheadings that
-# pop up out of nowhere, and make sure they are not getting picked up
-# as text
+# @input A stream of document lines.
+# @output A stream of heirarchy and text element data.
 #
 class OOFileParser:
 	##
@@ -797,7 +803,7 @@ class OOFileParser:
 		return line
 
 ##
-#
+# Represents a file.
 #
 class OOFile():
 	##
