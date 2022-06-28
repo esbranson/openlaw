@@ -422,7 +422,7 @@ class XMLBuilder:
 		for key in keys:
 			self.state[key] = None
 
-regex_sec = r'^(\d+\-\d+\-[\d\.]+)\.\s\s+(.+?)\.\s+(.+)'
+regex_sec = r'^(\d+\-[\d\.]+\-[\d\.]+)\.\s\s+(.+?)\.\s+(.+)'
 
 ##
 # A state machine program that parses a stream of unstructured lines into
