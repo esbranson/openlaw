@@ -533,8 +533,6 @@ class OOFileParser:
 			return self.transition_text(signal)
 		elif OOFileParser.test_sec(line, adjust):
 			return self.transition_section(signal)
-#		elif OOFileParser.test_subsec(line, adjust):
-#			return self.transition_subsection(signal)
 		elif OOFileParser.test_heirarchy(line):
 			return self.transition_heirarchy(signal)
 		elif OOFileParser.test_anonymous_heirarchy(line, adjust, weight):
@@ -542,7 +540,6 @@ class OOFileParser:
 			return self.transition_self(signal)
 		# XXX should we only be able to enter subheader state
 		# from heirarchy state to prevent mistaking text for subheaders?
-#		elif adjust == 'center' and not line.startswith('WARNING'):
 		elif (adjust == 'center' or align == 'CENTER') and self.last_line_ended_with_colon is False:
 			return self.transition_heirarchy_subheader(signal)
 		else:
@@ -585,43 +582,7 @@ class OOFileParser:
 			return self.transition_text(signal)
 		elif OOFileParser.test_sec(line, adjust):
 			return self.transition_section(signal)
-#		elif OOFileParser.test_subsec(line, adjust):
-#			return self.transition_subsection(signal)
-		elif "Editor's note" in line:
-			return self.transition_section_note(signal)
 		else: # XXX 
-			return self.transition_text(signal)
-	def event_section_note(self, signal):
-		logging.uberdebug('section_note')
-		line = signal['line']
-		if line == '':
-			return self.transition_section_note_one(signal)
-		else:
-			logging.warning('section_note assume one: {}'.format(signal))
-			return self.transition_section_note_one(signal)
-	def event_section_note_one(self, signal):
-		logging.uberdebug('section_note_one')
-		line, adjust = signal['line'], signal['adjust']
-		if line == '':
-			return self.transition_section_note_two(signal)
-		elif OOFileParser.test_sec(line, adjust):
-			return self.transition_section(signal)
-#		elif OOFileParser.test_subsec(line, adjust):
-#			return self.transition_subsection(signal)
-		else:
-			logging.warning('section_note_one assume two: {}'.format(signal))
-			return self.transition_section_note_two(signal)
-	def event_section_note_two(self, signal):
-		logging.uberdebug('section_note_two')
-		line, adjust = signal['line'], signal['adjust']
-		if line == '':
-			return self.transition_idle(signal)
-#		elif OOFileParser.test_subsec(line, adjust):
-#			return self.transition_subsection(signal)
-		elif OOFileParser.test_sec(line, adjust):
-			return self.transition_section(signal)
-		else:
-			logging.warning('section_note_two assume text: {}'.format(signal))
 			return self.transition_text(signal)
 	def event_text(self, signal):
 		logging.uberdebug('text')
@@ -638,8 +599,6 @@ class OOFileParser:
 			return self.transition_text(signal)
 		elif OOFileParser.test_sec(line, adjust):
 			return self.transition_section(signal)
-#		elif OOFileParser.test_subsec(line, adjust):
-#			return self.transition_subsection(signal)
 		elif OOFileParser.test_heirarchy(line):
 			return self.transition_heirarchy(signal)
 		else:
@@ -708,35 +667,8 @@ class OOFileParser:
 		sec = OOFileParser.tokenize_section(signal['line']) # return enum, head, status, text, subsecl
 		logging.uberdebug('section sec: {sec}')
 		ret = [{'type': 'heirarchy', 'subtype': 'section', 'name': None, 'enum': sec[0], 'heading': sec[1], 'content': sec[3], 'status': sec[2]}]
-		subsec = sec[4]
-		while subsec is not None: # return enum, status, text, subsecl
-			logging.uberdebug('section subsec: {}'.format(subsec))
-			ret.append({'type': 'heirarchy', 'subtype': None, 'name': None, 'enum': subsec[0], 'heading': None, 'content': subsec[2], 'status': subsec[1]})
-			subsec = subsec[3]
 		self.state = self.StateEnum.section
 		return ret
-	def transition_subsection(self, signal):
-		logging.uberdebug('subsection: {}'.format(signal))
-		subsec = OOFileParser.tokenize_subsection(signal['line'])
-		ret = []
-		while subsec is not None: # return enum, status, text, subsecl
-			logging.uberdebug('subsection subsec: {}'.format(subsec))
-			ret.append({'type': 'heirarchy', 'subtype': None, 'name': None, 'enum': subsec[0], 'heading': None, 'content': subsec[2], 'status': subsec[1]})
-			subsec = subsec[3]
-		self.state = self.StateEnum.section
-		return ret
-	def transition_section_note(self, signal):
-		logging.uberdebug('section_note: {}'.format(signal))
-		self.state = self.StateEnum.section_note
-		return []
-	def transition_section_note_one(self, signal):
-		logging.uberdebug('section_note_one: {}'.format(signal))
-		self.state = self.StateEnum.section_note_one
-		return []
-	def transition_section_note_two(self, signal):
-		logging.uberdebug('section_note_two: {}'.format(signal))
-		self.state = self.StateEnum.section_note_two
-		return []
 	def transition_text(self, signal):
 		logging.debug('text: {}'.format(signal))
 		ret = [{'type': 'text', 'subtype': None, 'name': None, 'enum': None, 'heading': None, 'content': signal['line'], 'status': None}]
@@ -749,7 +681,6 @@ class OOFileParser:
 	def test_sec(line, adjust):
 		m = re.search(regex_sec, line)
 		return m is not None
-#		return len(line) and '-' in line and line.split('-',1)[0][-1].isdigit() and adjust != 'center' and line[0].isdigit()
 	@staticmethod
 	def test_subsec(line, adjust):
 		return len(line) and '\xa0' in line and line[0] == '(' and ')' in line and adjust != 'center' and ' ' not in line.split(')',1)[0] and '_' not in line.split(')',1)[0] and '\xa0' not in line.split(')',1)[0]
@@ -805,9 +736,6 @@ class OOFileParser:
 			elif head is None:
 				head,status = OOFileParser.parse_sec_head(s)
 				logging.uberdebug('tokenize_section head: {} {}'.format(head, status))
-#			elif OOFileParser.test_enum(s):
-#				subsecl = OOFileParser.tokenize_subsection_r(l[n:])
-#				break # input has been consumed
 			else:
 				textl.append(s)
 		text = str.join(' ', textl) or None
@@ -832,103 +760,6 @@ class OOFileParser:
 			s,_ = s.rsplit('(Repealed)',1)
 			status = 'removed'
 		return s.strip().rstrip('.'), status
-	##
-	# Return a parsed subsection.
-	#
-	@staticmethod
-	def tokenize_subsection(line):
-#		l = line.split('\xa0')
-		logging.uberdebug('')
-#		l = [s.strip() for s in l]
-#		ret = OOFileParser.tokenize_subsection_r(l)
-#		return ret
-		return None, None, line, None
-	##
-	# Parse subsection(s) from a simply tokenized string.
-	#
-	# XXX whether its a sub-subsection or another type should be
-	# decided at higher layers
-	#
-#	@staticmethod
-#	def tokenize_subsection_r(l):
-#		logging.uberdebug('tokenize_subsection_r: {}'.format(l))
-#		enum = status = subsecl = None
-#		textl = []
-#		for n,s in enumerate(l):
-#			if s == '':
-#				pass
-#			# this subsection's enum
-#			elif enum is None:
-#				enum,text = OOFileParser.parse_subsec_enum(s)
-#				logging.uberdebug('tokenize_subsection_r enum: {} {}'.format(repr(enum), repr(text)))
-#				if text is not None:
-#					textl.append(text)
-#			# repealed
-#			# XXX this should be a note or history
-#			elif OOFileParser.test_subsec_repealed(s):
-#				textl.append(OOFileParser.parse_subsec_repealed(s))
-#				status = 'removed'
-#			# enum indicating a new sub-subsection
-#			elif OOFileParser.test_enum(s):
-#				logging.uberdebug('tokenize_subsection_r recurs: {}'.format(l[n:]))
-#				subsecl = OOFileParser.tokenize_subsection_r(l[n:])
-#				break # input has been consumed
-#			# text for this subsection
-#			else:
-#				logging.uberdebug('tokenize_subsection_r text: {}'.format(s))
-#				textl.append(s)
-#		text = str.join(' ', textl)
-#		if text == 'Repealed.' or text == 'Repealed':
-#			text = None
-#			status = 'removed'
-#		text = text or None
-#		return enum, status, text, subsecl
-	##
-	# Test if string represents an enumeration.
-	#
-	@staticmethod
-	def test_enum(s):
-	#	if s[0] == '(' or '(' in s and s[-1] == ')':
-		if len(s) >= 3 and (s[0] == '(' or '(' in s and s[-1] == ')') and s[-2] != '.':
-			return True
-#		elif s[0] == '(' and s[-1] == ')' and (') to (' in s or ') and (' in s):
-#			return True
-		return False
-	##
-	# Parse and return an enumeration and text before enumeration (if any).
-	#
-	# XXX how to specify range values for num in Akoma Ntoso?
-	# XXX how will choice of enum affect id attribute? whitespace?
-	#
-	@staticmethod
-	def parse_subsec_enum(s):
-		if ') to (' in s:
-			one,two = s.strip('(').split(') to (')
-			two,text = two.split(')',1)
-			enum = one + ' to ' + two
-		elif ') and (' in s:
-			one,two = s.strip('(').split(') and (')
-			two,text = two.split(')',1)
-			enum = one + ' and ' + two
-		else:
-			enum,text = s.split(')',1)
-			if len(text) and text[0] == ' ':
-				# fixup '(num) text'
-				text = text.strip()
-			enum = enum.strip('(').strip(')')
-		return enum, text or None
-	##
-	#
-	#
-	@staticmethod
-	def test_subsec_repealed(s):
-		return s.startswith('(Deleted')
-	##
-	# XXX this should be a note or history
-	#
-	@staticmethod
-	def parse_subsec_repealed(s):
-		return s.strip('(').strip(')')
 	##
 	# Perform specific fixups on string and return fixed-up string.
 	#
