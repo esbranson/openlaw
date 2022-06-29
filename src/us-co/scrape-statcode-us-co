@@ -313,7 +313,7 @@ class XMLBuilder:
 		if parentel is not None:
 			parentel.append(el)
 		else:
-			logging.debug('event_section no parent: {}'.format(signal))
+			logging.warning('event_section no parent: {}'.format(signal))
 		# update state
 		self.set_state(el, typ)
 	##
@@ -496,8 +496,7 @@ class OOFileParser:
 	# in the form of {'type':, 'enum':, 'heading':, 'content':}.
 	#
 	# The event function is chosen by current state; the transition
-	# function is (then) chosen by current state and the signal. As such,
-	# its output is chosen by current state and the signal as well.
+	# function is (then) chosen by current state and the signal.
 	#
 	def event(self, signal):
 		# XXX strip line
@@ -622,7 +621,7 @@ class OOFileParser:
 	# heirarchy state.
 	#
 	def transition_heirarchy(self, signal):
-		logging.debug('heirarchy: {}'.format(signal))
+		logging.superdebug('heirarchy: {}'.format(signal))
 		line = signal['line']
 		typ,enum = line.split(' ',1)
 		typ = typ.lower()
@@ -637,7 +636,7 @@ class OOFileParser:
 	# crashes on lack of incomplete heirarchy in stash.
 	#
 	def transition_heirarchy_subheader(self, signal):
-		logging.debug('subheader: {}'.format(signal))
+		logging.superdebug('subheader: {}'.format(signal))
 		if self.stash is not None:
 			line, weight = signal['line'], signal['weight']
 			head, status = OOFileParser.parse_subheader(line)
@@ -676,7 +675,7 @@ class OOFileParser:
 		self.state = self.StateEnum.section
 		return ret
 	def transition_text(self, signal):
-		logging.debug('text: {}'.format(signal))
+		logging.superdebug('text: {}'.format(signal))
 		ret = [{'type': 'text', 'subtype': None, 'name': None, 'enum': None, 'heading': None, 'content': signal['line'], 'status': None}]
 		self.state = self.StateEnum.text
 		return ret
@@ -687,9 +686,6 @@ class OOFileParser:
 	def test_sec(line, adjust):
 		m = re.search(regex_sec, line)
 		return m is not None
-	@staticmethod
-	def test_subsec(line, adjust):
-		return len(line) and '\xa0' in line and line[0] == '(' and ')' in line and adjust != 'center' and ' ' not in line.split(')',1)[0] and '_' not in line.split(')',1)[0] and '\xa0' not in line.split(')',1)[0]
 	@staticmethod
 	def test_heirarchy(line):
 		# XXX should there be a space after each?
@@ -799,7 +795,7 @@ class OOFileParser:
 		line = line.replace(' §\xa038-35-106.5', ' § 38-35-106.5')
 		# ret
 		if orig is not line:
-			logging.debug('fixup replace: {} {}'.format(repr(orig), repr(line)))
+			logging.superdebug('fixup replace: {} {}'.format(repr(orig), repr(line)))
 		return line
 
 ##
@@ -923,7 +919,7 @@ class OOFile():
 	@staticmethod
 	def close(doc):
 		# See <https://wiki.openoffice.org/wiki/Documentation/DevGuide/OfficeDev/Closing_Documents>.
-		logging.debug('OOFile closing: {}'.format(doc))
+		logging.debug('OOFile closing')
 		try:
 			if doc is not None:
 				# XXX we should check for the com.sun.star.util.XCloseable interface first
@@ -999,4 +995,3 @@ class OOFile():
 # do it
 if __name__ == "__main__":
 	sys.exit(main())
-
