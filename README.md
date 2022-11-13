@@ -4,9 +4,9 @@ This builds toward a minimal toolset for the display and analysis of legislative
 
 ## Rationale
 
-"Ignorance of the law is no excuse," as the saying goes, but a majority of citizens, nationals and residents are not informed about the law due to its inaccessibility, cost, language, complexity, volume, and rapid change. The law shapes economics and society, and thus the majority are denied the full profits of their democratic labor.
+"Ignorance of the law is no excuse", as the saying goes, but a majority of citizens, nationals and residents are not informed about the law due to its inaccessibility, cost, language, complexity, volume, and rapid change. The law shapes economics and society, and thus the majority are denied the full profits of their democratic labor.
 
-Overcoming these barriers is a necessary step for democratic control of government and polical parties. This is meant as a working demonstration of using standard formats to reduce the burden.
+Overcoming these barriers is a necessary step for democratic control of states' and polical parties' governments. This is meant as a working demonstration of using standard formats to reduce the burden.
 
 ## Utilities
 
@@ -18,7 +18,7 @@ Overcoming these barriers is a necessary step for democratic control of governme
 
 The current legal datasets have conversions to Akoma Ntoso:
 
-* Colorado Revised Statutes: ¯\_(ツ)_/¯
+* Colorado Revised Statutes: ¯\\_(ツ)_/¯
 * ~~United States Code~~: Cornell LII LexCraft was superseded by USLM.
 * ~~California codified statutes~~: Out of date?
 
