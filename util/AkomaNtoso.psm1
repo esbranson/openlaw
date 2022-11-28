@@ -3,7 +3,7 @@
   Import Akoma Ntoso.
 
  .Description
-  Import Akoma Ntoso or USLM sections.
+  Import Akoma Ntoso or USLM documents from wherever.
 
  .Parameter Document
   The object, path, URI or array thereof to parse.
@@ -23,7 +23,7 @@
 function Import-AkomaNtoso {
     [CmdletBinding()]
     Param(
-        [Parameter(ValueFromPipeline)]$Document,
+        [Parameter(Mandatory,ValueFromPipeline)]$Document,
         [switch]$IncludeAll
     )
 
@@ -31,8 +31,6 @@ function Import-AkomaNtoso {
         #
         # Parse the user input. Be flexible.
         #
-
-        if ($null -eq $Document) {return} # TODO Not needed if sanity checks all handle nullable variables and the default is return.
 
         if ($Document -is [xml]) {} # TODO Check that it's Akoma Ntoso.
         elseif ($Document -is [string] -and [System.Uri]::IsWellFormedUriString($Document, [System.UriKind]::Absolute)) {
