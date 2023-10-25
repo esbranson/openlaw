@@ -7,14 +7,17 @@ scrape-statcode-us-co - convert the Colorado Revised Statutes into Akoma Ntoso
 See <https://en.wikipedia.org/wiki/Colorado_Revised_Statutes>. Given titles as
 Open XML files, in order, this will output them as an Akoma Ntoso XML file.
 
-Usage:	scrape-statcode-us-co [options] file [file ...]
+Usage:	scrape-statcode-us-co [options] file
 Arguments:
 
 	file		input .docx file from the bulk download site
 	-o file		output file ('-' for stdout) (default: stdout)
-	-n num		number of parallel threads (default: 2)
-	-p num		number of Open Office processes (default: 1)
+	-c string	The StarOffice connect-string (default: 'socket,host=localhost,port=2002,tcpNoDelay=1')
 	-d		enable debuging output (default: warnings only)
+
+To run LibreOffice:
+
+	soffice --writer --accept='socket,host=localhost,port=2002,tcpNoDelay=1;urp;' --norestore --nologo --headless --nolockcheck
 """
 
 import sys
@@ -23,36 +26,40 @@ import getopt
 import lxml.etree as etree
 import uno
 import unohelper
-import shlex
-import subprocess
-import time
 import logging
 import mimetypes
 import enum
 import collections
-import concurrent.futures
 import threading
 import queue
-import tempfile
 import types
 import re
 
+logger = logging.getLogger(__name__)
+
 ##
-# Entry function: Parse paramters, call main function.
+# Parse paramters, call processing function.
 #
 def main():
 	fout = sys.stdout.buffer
 	debug = logging.INFO
-	threads = 2
-	processes = 1
-	logging.SUPERDEBUG = logging.DEBUG-2 # XXX monkey fix
-	logging.UBERDEBUG = logging.DEBUG-4
+	connect_string = 'uno:socket,host=localhost,port=2002,tcpNoDelay=1;urp;StarOffice.ComponentContext'
+	fn = None
+	logger.SUPERDEBUG = logging.DEBUG-2 # XXX monkey fix
+	logger.UBERDEBUG = logging.DEBUG-4
 
-	# parse arguments
+	# Configure logging
+	logging.basicConfig(format='{levelname} {process}/{thread}/{funcName} {message}', style='{', level=debug)
+	logging.addLevelName(logger.SUPERDEBUG, 'SUPERDEBUG')
+	logging.addLevelName(logger.UBERDEBUG, 'UBERDEBUG')
+	logger.superdebug = lambda msg, *args, **kwargs: logger.log(logger.SUPERDEBUG, msg, *args, **kwargs)
+	logger.uberdebug = lambda msg, *args, **kwargs: logger.log(logger.UBERDEBUG, msg, *args, **kwargs)
+
+	# Parse arguments
 	try:
-		opts, args = getopt.getopt(sys.argv[1:], 'o:n:p:dh')
+		opts, args = getopt.getopt(sys.argv[1:], 'o:c:dh')
 	except getopt.GetoptError:
-		logging.fatal('getopt error {}'.format(usage))
+		logger.fatal(f"getopt error {usage}")
 		return 1
 
 	for opt, arg in opts:
@@ -60,147 +67,93 @@ def main():
 			if debug is logging.INFO:
 				debug = logging.DEBUG
 			elif debug is logging.DEBUG:
-				debug = logging.SUPERDEBUG
-			elif debug is logging.SUPERDEBUG:
-				debug = logging.UBERDEBUG
+				debug = logger.SUPERDEBUG
+			elif debug is logger.SUPERDEBUG:
+				debug = logger.UBERDEBUG
 			else:
-				logging.warning("main unknown debugging level")
+				logger.warning("main unknown debugging level")
 				debug = logging.DEBUG
-		elif opt in {'-q', '--quiet'}:
-			debug = logging.WARNING
 		elif opt in {'-o'}:
 			fout = arg
-		elif opt in {'-n'}:
-			threads = int(arg)
-		elif opt in {'-p'}:
-			processes = int(arg)
+		elif opt in {'-c'}:
+			connect_string = f"uno:{arg};urp;StarOffice.ComponentContext"
 		elif opt in {'-h', '--help'}:
-			print(opt, usage)
+			print(usage)
 			return 0
 		else:
-			logging.fatal('invalid flag {}{}'.format(opt, usage))
+			logger.fatal(f"invalid flag {opt}{usage}")
 			return 1
 
-	if len(args) < 1:
-		logging.fatal('need input files {}'.format(usage))
+	logger.setLevel(debug)
+	if len(args) != 1:
+		logger.fatal(f"Missing input file {usage}")
 		return 1
-	fns = args
+	fn = args[0]
 
-	# configure
-	logging.basicConfig(format='{levelname} {process}/{thread}/{funcName} {message}', style='{', level=debug)
-	logging.addLevelName(logging.SUPERDEBUG, 'SUPERDEBUG')
-	logging.addLevelName(logging.UBERDEBUG, 'UBERDEBUG')
-#	logging.Logger.superdebug = lambda inst, msg, *args, **kwargs: inst.log(logging.SUPERDEBUG, msg, *args, **kwargs)
-	logging.superdebug = lambda msg, *args, **kwargs: logging.log(logging.SUPERDEBUG, msg, *args, **kwargs)
-#	logging.Logger.uberdebug = lambda inst, msg, *args, **kwargs: inst.log(logging.UBERDEBUG, msg, *args, **kwargs)
-	logging.uberdebug = lambda msg, *args, **kwargs: logging.log(logging.UBERDEBUG, msg, *args, **kwargs)
+	# Verify file type. This fails on Windows?
+	mime = mimetypes.guess_type(fn)
+	if mime[0] not in ('application/rtf','application/vnd.openxmlformats-officedocument.wordprocessingml.document') and os.name != 'nt':
+		logger.critical(f"Unknown filetype: {mime} {fn}")
+		return 2
 
-	# do it
-	ret = do_it(fns, fout, processes, threads)
+	xml = do_parse(connect_string, fn)
+	if xml is None:
+		logger.critical("Parsing returned no XML")
+		return 3
 
-	return ret
+	tree = etree.ElementTree(xml)
+	tree.write(fout)
+
+	return 0
 
 ##
-# Execute do_parse() against given filenames in parallel.
+# Parse a file and return Akoma Ntoso XML.
 #
-def do_it(fns, fout, nprocs, nthreads):
-	ret = 0
-	# start soffice processes
-	procs = []
-	for i in range(nprocs):
-		#pipename, tmpd, p = OOFile.start_soffice()
-		procs.append(OOFile.start_soffice())
-	time.sleep(5)
-	# xml body
+def do_parse(connect_string, fn):
+	logger.info('do_parse parsing: {}'.format(fn))
+
 	akn = etree.Element('akomaNtoso', nsmap={None: "http://docs.oasis-open.org/legaldocml/ns/akn/3.0", "xsi": "http://www.w3.org/2001/XMLSchema-instance"})
 	akn.attrib['{http://www.w3.org/2001/XMLSchema-instance}schemaLocation'] = "http://docs.oasis-open.org/legaldocml/ns/akn/3.0 ../schemas/akomantoso30.xsd"
 	act = etree.SubElement(akn, 'act')
 	meta = etree.SubElement(act, 'meta')
 	body = etree.SubElement(act, 'body')
-	# submit tasks
-	executor = concurrent.futures.ThreadPoolExecutor(max_workers=nthreads)
-	futures = []
-	for i,fn in enumerate(fns):
-		pipename = procs[i % nprocs][0]
-		# errq signals producer to fail
-		errq = queue.Queue() # XXX beware IPC v. interthread
-		future = executor.submit(do_parse, pipename, fn, errq)
-		futures.append((future, errq))
-	# complete tasks
-	try:
-		for xml in (future.result() for future,errq in futures):
-			# TODO we should have a faster way to detect errors
-			if xml is None:
-				# breaking cleanly triggers else clause
-				# XXX is this really shutting down executor?
-				raise RuntimeError('do_parse failed: xml is None')
-			body.append(xml)
-#		css = etree.ProcessingInstruction("xml-stylesheet", text='type="text/css" href="akn.css"')
-#		akn.addprevious(css)
-	except BaseException as e:
-		logging.critical('do_it exception: {} {}'.format(type(e), e))
-		ret = 1
-	else:
-		tree = etree.ElementTree(akn)
-		tree.write(fout)
-	finally:
-		# cleanup
-		logging.info('do_it cleaning up')
-		logging.debug('do_it poisoning queues and cancelling futures')
-		for future,errq in reversed(futures):
-			future.cancel()
-			errq.put(False)
-		logging.debug('do_it closing executor')
-		executor.shutdown()
-		logging.debug('do_it closing processes')
-		for pipename, tmpd, p in procs:
-			if p.poll() is None:
-				logging.debug('do_it closing soffice')
-				OOFile.terminate_soffice(OOFile.connect_soffice(pipename))
-			p.wait()
-			tmpd.cleanup()
-	return ret
 
-##
-# Parse a file and return partial Akoma Ntoso XML.
-#
-def do_parse(pipename, fn, errq):
-	logging.info('do_parse parsing: {}'.format(fn))
-	xml = None
+	#css = etree.ProcessingInstruction("xml-stylesheet", text='type="text/css" href="akn.css"')
+	#akn.addprevious(css)
+
 	try:
 		paraq = queue.Queue(100)
 		xmlq = queue.Queue(50)
 		outq = queue.Queue() # XXX should we bound these?
+		errq = queue.Queue()
+
 		# open files, build threads
-		# TODO different types of files?
-		mime = mimetypes.guess_type(fn)
-		if mime[0] in ('application/rtf','application/vnd.openxmlformats-officedocument.wordprocessingml.document'):
-			filethread = threading.Thread(target=OOFile.run, args=(pipename, fn, errq, paraq))
-		else:
-			logging.critical('do_parse unknown filetype: {} {}'.format(fn, mime))
-			return None
+		filethread = threading.Thread(target=OOFile.run, args=(connect_string, fn, errq, paraq))
 		parserthread = threading.Thread(target=OOFileParser.run, args=(paraq, xmlq, errq))
 		builderthread = threading.Thread(target=XMLBuilder.run, args=(xmlq, outq, errq))
+
 		# parse
 		builderthread.start()
 		parserthread.start()
 		filethread.start()
 		xml = outq.get()
-		if xml is False: # TODO implement better queue poisoning
-			xml = None
+		if xml is not False: # TODO implement better queue poisoning. Maybe use exception objects?
+			body.append(xml)
 	except OSError as e:
-		logging.critical('do_parse opening files: {}'.format(e))
+		logger.critical('do_parse opening files: {}'.format(e))
 		return None
 	except BaseException as e:
-		logging.critical('do_parse exception: {} {}'.format(type(e), e))
-	logging.info('do_parse done: {}'.format(fn))
-	# wait for completion of threads
-	# TODO is this necessary?
+		logger.critical('do_parse exception: {} {}'.format(type(e), e))
+		return None
+
+	# Wait for completion of threads. Is this necessary?
+	logger.info('joining threads: {}'.format(fn))
 	filethread.join()
 	parserthread.join()
 	builderthread.join()
+
 	# return
-	return xml
+	return akn
 
 ##
 # A state machine that parses a stream of semi-structured document lines
@@ -232,7 +185,7 @@ class XMLBuilder:
 			builder = XMLBuilder()
 			builder.parse(inq, outq, errq)
 		except BaseException as e:
-			logging.critical('XMLBuilder.run exception: {} {}'.format(type(e), e), exc_info=True)
+			logger.critical('XMLBuilder.run exception: {} {}'.format(type(e), e), exc_info=True)
 			outq.put(False) # poison queue
 			errq.put(False)
 	##
@@ -243,14 +196,14 @@ class XMLBuilder:
 		# process messages
 		while True:
 			msg = inq.get()
-			if msg is None: # poison pill
+			if msg is None: # EOF
 				outq.put(self.get_state_top())
 				break
-			elif msg is False:
+			elif msg is False: # poison pill
 				outq.put(False) # poison queue
 				errq.put(False)
 				break
-			logging.superdebug('XMLBuilder.parse: {}'.format(msg))
+			logger.superdebug('XMLBuilder.parse: {}'.format(msg))
 			self.event(msg)
 	##
 	# Process a signal.
@@ -272,7 +225,7 @@ class XMLBuilder:
 		text = signal['content']
 		last_el = self.get_last()
 		if last_el is None:
-			logging.warning(f'ignoring text {text}')
+			logger.warning(f'ignoring text {text}')
 			return
 		# Get or create content element.
 		content_el = last_el.find("./content")
@@ -313,7 +266,7 @@ class XMLBuilder:
 		if parentel is not None:
 			parentel.append(el)
 		else:
-			logging.warning('event_section no parent: {}'.format(signal))
+			logger.warning('event_section no parent: {}'.format(signal))
 		# update state
 		self.set_state(el, typ)
 	##
@@ -346,7 +299,7 @@ class XMLBuilder:
 		elif s == 'X' and self.state['subsubparagraph'] is not None and self.state['subsubparagraph'][0] == 'W':
 			ret = 'subdivision'
 		else:
-			logging.superdebug('heirarchy_type assume roman num: {}'.format(s))
+			logger.superdebug('heirarchy_type assume roman num: {}'.format(s))
 			ret = 'subparagraph'
 		return ret
 	##
@@ -374,7 +327,7 @@ class XMLBuilder:
 		elif XMLBuilder.test_below_section(typ):
 			ident = parentel.attrib['eId'] + '-' + enum
 		else:
-			logging.critical('get_id unknown type: {}'.format(typ))
+			logger.critical('get_id unknown type: {}'.format(typ))
 			raise RuntimeError('get_id unknown type: {}'.format(typ))
 		return ident
 	##
@@ -472,7 +425,7 @@ class OOFileParser:
 			parser = OOFileParser()
 			parser.parse(inq, outq, errq)
 		except BaseException as e:
-			logging.critical('OOFileParser.run exception: {} {}'.format(type(e), e), exc_info=True)
+			logger.critical('OOFileParser.run exception: {} {}'.format(type(e), e), exc_info=True)
 			outq.put(False) # poison queue
 			errq.put(False)
 	##
@@ -526,11 +479,11 @@ class OOFileParser:
 		#
 		return ret
 	def event_init(self, signal):
-		logging.uberdebug('init')
+		logger.uberdebug('init')
 		# XXX skip first line
 		return self.transition_idle(signal)
 	def event_idle(self, signal):
-		logging.uberdebug('idle')
+		logger.uberdebug('idle')
 		line, adjust, lmargin, weight, align = signal['line'], signal['adjust'], signal['lmargin'], signal['weight'], signal['align']
 		if line == '':
 			return self.transition_self(signal)
@@ -554,7 +507,7 @@ class OOFileParser:
 	# NOTE if we transition away, flush stashed output signal.
 	#
 	def event_heirarchy(self, signal):
-		logging.uberdebug('heirarchy')
+		logger.uberdebug('heirarchy')
 		line, adjust, weight, align = signal['line'], signal['adjust'], signal['weight'], signal['align']
 		if line == '':
 			# don't transition because we may get subheader
@@ -574,7 +527,7 @@ class OOFileParser:
 	# event_section
 	#
 	def event_section(self, signal):
-		logging.uberdebug('section')
+		logger.uberdebug('section')
 		line, adjust = signal['line'], signal['adjust']
 		if line == '':
 			return self.transition_idle(signal)
@@ -590,7 +543,7 @@ class OOFileParser:
 		else: # XXX 
 			return self.transition_text(signal)
 	def event_text(self, signal):
-		logging.uberdebug('text')
+		logger.uberdebug('text')
 		line, adjust, lmargin = signal['line'], signal['adjust'], signal['lmargin']
 		if line == '':
 			return self.transition_self(signal)
@@ -610,10 +563,10 @@ class OOFileParser:
 			# assume text attached to previous section/subsection
 			return self.transition_text(signal)
 	def transition_self(self, signal):
-		logging.uberdebug('self: {}'.format(signal))
+		logger.uberdebug('self: {}'.format(signal))
 		return []
 	def transition_idle(self, signal):
-		logging.uberdebug('idle: {}'.format(signal))
+		logger.uberdebug('idle: {}'.format(signal))
 		self.state = self.StateEnum.idle
 		return []
 	##
@@ -621,7 +574,7 @@ class OOFileParser:
 	# heirarchy state.
 	#
 	def transition_heirarchy(self, signal):
-		logging.superdebug('heirarchy: {}'.format(signal))
+		logger.superdebug('heirarchy: {}'.format(signal))
 		line = signal['line']
 		typ,enum = line.split(' ',1)
 		typ = typ.lower()
@@ -636,7 +589,7 @@ class OOFileParser:
 	# crashes on lack of incomplete heirarchy in stash.
 	#
 	def transition_heirarchy_subheader(self, signal):
-		logging.superdebug('subheader: {}'.format(signal))
+		logger.superdebug('subheader: {}'.format(signal))
 		if self.stash is not None:
 			line, weight = signal['line'], signal['weight']
 			head, status = OOFileParser.parse_subheader(line)
@@ -651,31 +604,31 @@ class OOFileParser:
 				else:
 					self.stash['status'] = status
 		else:
-			logging.warning('subheader stash is None')
+			logger.warning('subheader stash is None')
 		self.state = self.StateEnum.heirarchy
 		return []
 	##
 	# Flush stashed output signal
 	#
 	def transition_heirarchy_flush(self, f, signal):
-		logging.uberdebug(f'h_flush {signal}')
+		logger.uberdebug(f'h_flush {signal}')
 		assert isinstance(f, types.MethodType)
 		sig = self.stash
-		logging.uberdebug(f'h_flush {sig}')
+		logger.uberdebug(f'h_flush {sig}')
 		self.stash = None
 		ret = f(signal)
 		ret.insert(0, sig)
-		logging.uberdebug(f'h_flush {ret}')
+		logger.uberdebug(f'h_flush {ret}')
 		return ret
 	def transition_section(self, signal):
-		logging.uberdebug('section: {}'.format(signal))
+		logger.uberdebug('section: {}'.format(signal))
 		sec = OOFileParser.tokenize_section(signal['line']) # return enum, head, status, text, subsecl
-		logging.uberdebug('section sec: {sec}')
+		logger.uberdebug('section sec: {sec}')
 		ret = [{'type': 'heirarchy', 'subtype': 'section', 'name': None, 'enum': sec[0], 'heading': sec[1], 'content': sec[3], 'status': sec[2]}]
 		self.state = self.StateEnum.section
 		return ret
 	def transition_text(self, signal):
-		logging.superdebug('text: {}'.format(signal))
+		logger.superdebug('text: {}'.format(signal))
 		ret = [{'type': 'text', 'subtype': None, 'name': None, 'enum': None, 'heading': None, 'content': signal['line'], 'status': None}]
 		self.state = self.StateEnum.text
 		return ret
@@ -725,7 +678,7 @@ class OOFileParser:
 			text = m.group(3)
 			return enum, heading, None, text, None
 		l = line.split('\xa0')
-		logging.uberdebug('tokenize_section: {}'.format(l))
+		logger.uberdebug('tokenize_section: {}'.format(l))
 		l = [s.strip() for s in l]
 		enum = head = status = subsecl = None
 		textl = [] # TODO should we join? or should they be separate <p>?
@@ -734,10 +687,10 @@ class OOFileParser:
 				pass
 			elif enum is None:
 				enum = OOFileParser.parse_sec_enum(s)
-				logging.uberdebug(f'tokenize_section enum: {enum}')
+				logger.uberdebug(f'tokenize_section enum: {enum}')
 			elif head is None:
 				head,status = OOFileParser.parse_sec_head(s)
-				logging.uberdebug('tokenize_section head: {} {}'.format(head, status))
+				logger.uberdebug('tokenize_section head: {} {}'.format(head, status))
 			else:
 				textl.append(s)
 		text = str.join(' ', textl) or None
@@ -795,7 +748,7 @@ class OOFileParser:
 		line = line.replace(' §\xa038-35-106.5', ' § 38-35-106.5')
 		# ret
 		if orig is not line:
-			logging.superdebug('fixup replace: {} {}'.format(repr(orig), repr(line)))
+			logger.superdebug('fixup replace: {} {}'.format(repr(orig), repr(line)))
 		return line
 
 ##
@@ -806,23 +759,24 @@ class OOFile():
 	#
 	#
 	@staticmethod
-	def run(pipename, fn, errq, outq):
+	def run(connect_string, fn, errq, outq):
 		try:
-			OOFile.parse(pipename, fn, errq, outq)
+			OOFile.parse(connect_string, fn, errq, outq)
 		except BaseException as e:
-			logging.critical('OOFile.run exception: {} {}'.format(type(e), e))
+			logger.critical('OOFile.run exception: {} {}'.format(type(e), e))
 			outq.put(False) # poison queue
+
 	##
 	# Open file using desktop and parse and enqueue messages representing paragraphs.
 	#
 	@staticmethod
-	def parse(pipename, fn, errq, outq):
+	def parse(connect_string, fn, errq, outq):
 		assert fn is not None and outq is not None
 		doc = None
 		# get desktop
-		desktop = OOFile.connect_soffice(pipename)
+		desktop = OOFile.connect_soffice(connect_string)
 		if not desktop:
-			logging.critical('OOFile.parse no desktop')
+			logger.critical('OOFile.parse no desktop')
 			outq.put(False)
 			return
 		# open file
@@ -830,19 +784,19 @@ class OOFile():
 		try:
 			doc = desktop.loadComponentFromURL(url ,'_blank', 0, (uno.createUnoStruct('com.sun.star.beans.PropertyValue', 'ReadOnly', 0, True, 0),))
 		except uno.getClass('com.sun.star.lang.IllegalArgumentException') as e:
-			logging.critical('OOFile.parse file not found: {}'.format(e))
+			logger.critical('OOFile.parse file not found: {}'.format(e))
 			outq.put(False)
 			return
 		except uno.getClass('com.sun.star.lang.DisposedException') as e:
-			logging.critical('OOFile.parse desktop bridge died: {}'.format(e))
+			logger.critical('OOFile.parse desktop bridge died: {}'.format(e))
 			outq.put(False)
 			return
 		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
-			logging.critical('OOFile.parse desktop exception: {}'.format(e))
+			logger.critical('OOFile.parse desktop exception: {}'.format(e))
 			outq.put(False)
 			return
 		if doc is None:
-			logging.critical('OOFile.parse doc is None')
+			logger.critical('OOFile.parse doc is None')
 			outq.put(False)
 			return
 		# get the com.sun.star.text.Text service and get an XEnumeration of com.sun.star.text.Paragraph objects from the XEnumerationAccess
@@ -886,7 +840,7 @@ class OOFile():
 			elif adjustn == 2:
 				adjust = 'block'
 			else:
-				logging.warning('OOFile.parse unknown adjust: {}'.format(adjustn))
+				logger.warning('OOFile.parse unknown adjust: {}'.format(adjustn))
 				adjust = None
 			if round(weightn) == 100: # com.sun.star.awt.FontWeight
 				weight = 'normal'
@@ -895,7 +849,7 @@ class OOFile():
 			elif weightn == -1:
 				weight = None
 			else:
-				logging.warning('OOFile.parse unknown weight: {}'.format(weightn))
+				logger.warning('OOFile.parse unknown weight: {}'.format(weightn))
 				weight = None
 			message = {'align': align, 'adjust': adjust, 'lmargin': lmargin, 'weight': weight, 'style': style, 'line': s}
 			# check for error message
@@ -906,28 +860,32 @@ class OOFile():
 					outq.put(False) # poison output queue and exit
 					return
 				except queue.Empty as e:
-					logging.warning('OOFile.parse errq size weirdness')
+					logger.warning('OOFile.parse errq size weirdness')
 			# enqueue message
 			outq.put(message)
-		# close file
-		OOFile.close(doc)
+		# close desktop
+		OOFile.close(desktop)
 		# poison queue
 		outq.put(None)
+
 	##
-	#
+	# Close the Desktop connection.
 	#
 	@staticmethod
-	def close(doc):
+	def close(desktop):
 		# See <https://wiki.openoffice.org/wiki/Documentation/DevGuide/OfficeDev/Closing_Documents>.
-		logging.debug('OOFile closing')
+		logger.debug('Closing desktop')
 		try:
-			if doc is not None:
+			if desktop is not None:
 				# XXX we should check for the com.sun.star.util.XCloseable interface first
-				doc.close(True)
+				desktop.close(True)
 		except uno.getClass('com.sun.star.lang.DisposedException') as e:
-			logging.critical('OOFile.parse uno.DisposedException: {} {}'.format(doc, e))
+			logger.critical('OOFile.parse uno.DisposedException: {} {}'.format(doc, e))
 		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
-			logging.critical('OOFile.parse uno.RuntimeException: {} {}'.format(doc, e))
+			logger.critical('OOFile.parse uno.RuntimeException: {} {}'.format(doc, e))
+		except Exception as e:
+			logger.critical('exception: {} {}'.format(type(e), e))
+
 	##
 	# Get an XEnumeration of objects from a given object supporting the
 	# XEnumerationAccess interface.
@@ -937,60 +895,34 @@ class OOFile():
 		xenum = obj.createEnumeration()
 		while xenum.hasMoreElements():
 			yield xenum.nextElement()
-	##
-	# TODO make POSIX/Windows agnostic, e.g., USERPROFILE instead of HOME.
-	#
-	@staticmethod
-	def start_soffice(pipename=None):
-		if pipename is None:
-			pipename = 'officepipe-'+next(tempfile._RandomNameSequence())
-		tmpd = tempfile.TemporaryDirectory()
-		cmd = 'soffice --writer --accept="pipe,name='+pipename+';urp;StarOffice.ServiceManager" --norestore --nologo --headless --nolockcheck'
-		p = subprocess.Popen(shlex.split(cmd), env={"HOME": tmpd.name}, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-		return pipename, tmpd, p
 
 	##
 	# Connect to a running soffice instance and return a XDesktop object.
 	#
 	@staticmethod
-	def connect_soffice(pipename, tries=5, sleep=5):
-		context = None
+	def connect_soffice(connect_string, tries=5, sleep=5):
 		desktop = None
-		local = uno.getComponentContext()
-		resolver = local.ServiceManager.createInstanceWithContext('com.sun.star.bridge.UnoUrlResolver', local)
-		resolvurl = 'uno:pipe,name='+pipename+';urp;StarOffice.ComponentContext'
-		for i in range(tries):
-			try:
-				context = resolver.resolve(resolvurl)
-				if context is not None:
-					desktop = context.ServiceManager.createInstanceWithContext('com.sun.star.frame.Desktop', context)
-			except uno.getClass('com.sun.star.lang.DisposedException') as e:
-				logging.critical('OOFile.connect_soffice bridge died: {}'.format(e))
-				break
-			except uno.getClass('com.sun.star.connection.NoConnectException') as e:
-				logging.debug('OOFile.connect_soffice failed to connect {} / {}'.format(i+1, tries))
-				time.sleep(sleep)
-		if context is None or desktop is None:
-			logging.warning('OOFile.connect_soffice failed to connect')
-		return desktop
 
-	##
-	#
-	#
-	@staticmethod
-	def terminate_soffice(desktop):
-		if desktop is None:
-			logging.debug('OOFile.terminate_soffice desktop None')
-			return False
 		try:
-			desktop.terminate() # kills soffice
-		except uno.getClass('com.sun.star.lang.DisposedException') as e: # XXX needed?
-			logging.critical('OOFile.terminate_soffice uno.DisposedException: {} {}'.format(desktop, e))
-			return False
-		except uno.getClass('com.sun.star.uno.RuntimeException') as e:
-			logging.critical('OOFile.terminate_soffice uno.RuntimeException: {} {}'.format(desktop, e))
-			return False
-		return True
+			ctxLocal = uno.getComponentContext()
+			smgrLocal = ctxLocal.ServiceManager
+			resolver = smgrLocal.createInstanceWithContext('com.sun.star.bridge.UnoUrlResolver', ctxLocal)
+			ctx = resolver.resolve(connect_string)
+			smgr = ctx.ServiceManager
+			logger.superdebug(f"smgr: {smgr}")
+			desktop = smgr.createInstanceWithContext("com.sun.star.frame.Desktop", ctx)
+
+		except uno.getClass('com.sun.star.lang.DisposedException') as e:
+			logger.critical(f"Bridge died: {e}")
+		except Exception as e:
+			logger.critical(f"{type(e)} {e}")
+		except uno.getClass('com.sun.star.connection.NoConnectException') as e:
+			logger.critical(f"Failed to connect: {e}")
+
+		if desktop is None:
+			logger.critical(f"Desktop is None")
+
+		return desktop
 
 # do it
 if __name__ == "__main__":
